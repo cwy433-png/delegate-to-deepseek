@@ -1,0 +1,24 @@
+{
+  "models": [
+    {
+      "id": "deepseek-v4-flash-direct",
+      "name": "DeepSeek V4 Flash (direct)",
+      "url": "https://api.deepseek.com",
+      "apiKey": "${DEEPSEEK_API_KEY}",
+      "vendor": "DeepSeek",
+      "maxInputTokens": 1000000,
+      "maxOutputTokens": 50000,
+      "maxAllowedSize": 1000000,
+      "supportsToolCall": true,
+      "supportsReasoning": true,
+      "supportsImages": false,
+      "temperature": 1,
+      "descriptionZh": "直连 api.deepseek.com，构建版本可知；用自己的 API key 计费",
+      "descriptionEn": "Direct to api.deepseek.com on your own key, so the build is known",
+      "relatedModels": {
+        "lite": "deepseek-v4-flash-direct",
+        "reasoning": "deepseek-v4-flash-direct"
+      }
+    }
+  ]
+}

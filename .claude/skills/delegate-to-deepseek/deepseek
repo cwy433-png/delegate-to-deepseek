@@ -8,11 +8,11 @@
 #     600s ceiling instead of being killed mid-turn
 #   - puts the ChatGPT.app codex binary on PATH for --backend codex, which is
 #     still the right choice when review must be enforced by an OS sandbox
-# All other arguments pass straight through to the launcher.
 #
-# This file is the version-controlled original. `setup.py install-claude` copies
-# it to ~/.claude/skills/delegate-to-deepseek/ so the skill also works outside
-# this repository; keep the two byte-identical.
+# Defaults are prepended rather than conditional: argparse takes the last
+# occurrence of an option, so anything the caller passes wins.
+#
+# deepseek.cmd is the Windows twin of this script; keep the two in step.
 
 set -euo pipefail
 
@@ -43,19 +43,4 @@ if ! command -v codex >/dev/null 2>&1 && [ -x "$BUNDLED_CODEX_DIR/codex" ]; then
   export PATH="$BUNDLED_CODEX_DIR:$PATH"
 fi
 
-has_timeout=0
-has_backend=0
-for arg in "$@"; do
-  case "$arg" in
-    --timeout) has_timeout=1 ;;
-    --backend) has_backend=1 ;;
-  esac
-done
-if [ "$has_timeout" -eq 0 ]; then
-  set -- --timeout 480 "$@"
-fi
-if [ "$has_backend" -eq 0 ]; then
-  set -- --backend claude "$@"
-fi
-
-exec python3 "$LAUNCHER" "$@"
+exec python3 "$LAUNCHER" --timeout 480 --backend claude "$@"

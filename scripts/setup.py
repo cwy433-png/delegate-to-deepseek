@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import argparse
 import getpass
+import json
 import os
 from pathlib import Path
 import platform
@@ -31,6 +32,17 @@ SKILL_NAME = "delegate-to-deepseek"
 # its frontmatter, the wrapper in its header comment -- so an unrelated file
 # that happens to sit at the target path is never clobbered.
 MARKER_CLAUDE = SKILL_NAME
+# The custom model id defined in .codebuddy/models.json. WorkBuddy reaches
+# api.deepseek.com directly through it, so the build in use is knowable.
+WORKBUDDY_MODEL_ID = "deepseek-v4-flash-direct"
+# (filename, needs the executable bit). Both wrappers install on every platform:
+# the inactive one is inert, and shipping both keeps an installed copy complete
+# when a home directory is shared or synced between machines.
+CLAUDE_SKILL_FILES = (
+    ("SKILL.md", False),
+    ("deepseek", True),
+    ("deepseek.cmd", False),
+)
 KEY_DIALOG_SCRIPT = r'''
 set dialogResult to display dialog "Paste your DeepSeek API key. It will be stored in macOS Keychain and will not be written to Codex config." default answer "" with title "Configure DeepSeek for Codex" buttons {"Cancel", "Save"} default button "Save" cancel button "Cancel" with hidden answer
 return text returned of dialogResult
@@ -208,7 +220,13 @@ def claude_skill_target() -> Path:
     return claude_home() / "skills" / SKILL_NAME
 
 
-def write_file_atomically(target: Path, data: str, *, executable: bool) -> None:
+def write_file_atomically(
+    target: Path,
+    data: str,
+    *,
+    executable: bool = False,
+    mode: int | None = None,
+) -> None:
     with tempfile.NamedTemporaryFile(
         mode="w",
         encoding="utf-8",
@@ -220,7 +238,7 @@ def write_file_atomically(target: Path, data: str, *, executable: bool) -> None:
         handle.write(data)
         temporary = Path(handle.name)
     os.replace(temporary, target)
-    target.chmod(0o755 if executable else 0o644)
+    target.chmod(mode if mode is not None else (0o755 if executable else 0o644))
 
 
 def install_claude() -> int:
@@ -240,7 +258,7 @@ def install_claude() -> int:
     target.mkdir(parents=True, exist_ok=True)
 
     copied = 0
-    for name, executable in (("SKILL.md", False), ("deepseek", True)):
+    for name, executable in CLAUDE_SKILL_FILES:
         origin = source / name
         if not origin.is_file():
             print(f"Claude skill file missing: {origin}", file=sys.stderr)
@@ -270,7 +288,7 @@ def install_claude() -> int:
 def claude_skill_is_current() -> bool:
     source = claude_skill_source()
     target = claude_skill_target()
-    for name in ("SKILL.md", "deepseek"):
+    for name, _ in CLAUDE_SKILL_FILES:
         origin = source / name
         destination = target / name
         if not origin.is_file() or not destination.is_file():
@@ -278,6 +296,139 @@ def claude_skill_is_current() -> bool:
         if origin.read_text(encoding="utf-8") != destination.read_text(encoding="utf-8"):
             return False
     return True
+
+
+def workbuddy_home() -> Path:
+    configured = (
+        os.environ.get("WORKBUDDY_CONFIG_DIR") or os.environ.get("CODEBUDDY_CONFIG_DIR")
+    )
+    return Path(configured).expanduser() if configured else Path.home() / ".workbuddy"
+
+
+def workbuddy_settings_path() -> Path:
+    return workbuddy_home() / "settings.json"
+
+
+def stored_key() -> str | None:
+    """Return the stored DeepSeek key, or ``None``.
+
+    Delegates to ``deepseek_key.py`` so the per-platform credential lookup lives
+    in exactly one place.
+    """
+    result = subprocess.run(
+        [sys.executable, str(skill_dir() / "scripts" / "deepseek_key.py")],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    key = result.stdout.strip()
+    return key if result.returncode == 0 and key else None
+
+
+def workbuddy_env_updates(key: str) -> dict[str, str]:
+    """The two variables WorkBuddy needs to reach DeepSeek directly.
+
+    A custom model resolves ``apiKey`` only by expanding ``${VAR}`` from
+    ``process.env``, so the key has to arrive as an environment variable;
+    ``CODEBUDDY_SMALL_FAST_MODEL`` then points the ``lite`` variant -- the one
+    ``Explore`` sub-agents declare -- at that model.
+    """
+    return {
+        "DEEPSEEK_API_KEY": key,
+        "CODEBUDDY_SMALL_FAST_MODEL": WORKBUDDY_MODEL_ID,
+    }
+
+
+def workbuddy_env_is_current() -> bool:
+    """Whether WorkBuddy's settings already point the lite variant at DeepSeek.
+
+    Checks that a key is present without reading its value anywhere it could be
+    printed.
+    """
+    target = workbuddy_settings_path()
+    if not target.is_file():
+        return False
+    try:
+        settings = json.loads(target.read_text(encoding="utf-8") or "{}")
+    except (json.JSONDecodeError, OSError):
+        return False
+    env = settings.get("env") if isinstance(settings, dict) else None
+    if not isinstance(env, dict):
+        return False
+    return bool(env.get("DEEPSEEK_API_KEY")) and (
+        env.get("CODEBUDDY_SMALL_FAST_MODEL") == WORKBUDDY_MODEL_ID
+    )
+
+
+def install_workbuddy() -> int:
+    """Merge the DeepSeek variables into WorkBuddy's settings.
+
+    WorkBuddy's ``settings.json`` holds unrelated user state (enabled plugins,
+    channel configuration), so this reads, merges, and writes back rather than
+    replacing the file, and refuses to touch it at all if it does not parse.
+    """
+    models = skill_dir() / ".codebuddy" / "models.json"
+    if not models.is_file():
+        print(f"Custom model definition missing: {models}", file=sys.stderr)
+        return 1
+
+    key = stored_key()
+    if key is None:
+        print("Opening the DeepSeek API key window...", file=sys.stderr)
+        status = store_key()
+        if status != 0:
+            return status
+        key = stored_key()
+        if key is None:
+            print("DeepSeek API key is still unavailable.", file=sys.stderr)
+            return 3
+
+    target = workbuddy_settings_path()
+    if not target.parent.is_dir():
+        print(
+            f"WorkBuddy config directory not found: {target.parent}\n"
+            "Install and launch WorkBuddy once before running this action.",
+            file=sys.stderr,
+        )
+        return 1
+
+    settings: dict[str, object] = {}
+    if target.exists():
+        try:
+            parsed = json.loads(target.read_text(encoding="utf-8") or "{}")
+        except json.JSONDecodeError as error:
+            print(
+                f"Refusing to rewrite unparsable settings: {target} ({error})",
+                file=sys.stderr,
+            )
+            return 1
+        if not isinstance(parsed, dict):
+            print(f"Refusing to rewrite non-object settings: {target}", file=sys.stderr)
+            return 1
+        settings = parsed
+
+    current_env = settings.get("env")
+    if current_env is not None and not isinstance(current_env, dict):
+        print(f'Refusing to overwrite a non-object "env" in {target}', file=sys.stderr)
+        return 1
+
+    env = dict(current_env or {})
+    updates = workbuddy_env_updates(key)
+    key = ""
+    if all(env.get(name) == value for name, value in updates.items()):
+        print(f"WorkBuddy settings already current: {target}")
+        return 0
+
+    env.update(updates)
+    settings["env"] = env
+    write_file_atomically(
+        target,
+        json.dumps(settings, ensure_ascii=False, indent=2) + "\n",
+        mode=0o600,
+    )
+    print(f"Updated WorkBuddy settings: {target}")
+    print("Restart WorkBuddy so it picks up the new environment.")
+    return 0
 
 
 def apple_script_string(value: str) -> str:
@@ -511,6 +662,14 @@ def check() -> int:
             file=sys.stderr,
         )
 
+    # WorkBuddy is optional too, and only worth mentioning once it is installed.
+    if workbuddy_home().is_dir() and not workbuddy_env_is_current():
+        print(
+            f"NOTE: WorkBuddy is not pointed at DeepSeek yet. Configure it with: "
+            f"{sys.executable} {skill_dir() / 'scripts' / 'setup.py'} install-workbuddy",
+            file=sys.stderr,
+        )
+
     if problems:
         for problem in problems:
             print(f"ERROR: {problem}", file=sys.stderr)
@@ -531,7 +690,14 @@ def parse_args() -> argparse.Namespace:
         "action",
         nargs="?",
         default="configure",
-        choices=("configure", "install", "install-claude", "store-key", "check"),
+        choices=(
+            "configure",
+            "install",
+            "install-claude",
+            "install-workbuddy",
+            "store-key",
+            "check",
+        ),
     )
     return parser.parse_args()
 
@@ -544,6 +710,8 @@ def main() -> int:
         return install()
     if action == "install-claude":
         return install_claude()
+    if action == "install-workbuddy":
+        return install_workbuddy()
     if action == "store-key":
         return store_key()
     return check()

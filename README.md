@@ -47,14 +47,30 @@ python3 -m py_compile scripts/*.py
 | --- | --- | --- |
 | `SKILL.md`、`agents/openai.yaml` | Codex CLI | 仓库本身就是 `~/.codex/skills/<name>/` |
 | `.claude/skills/delegate-to-deepseek/` | Claude Code | 项目级 skill，同时是复制到 `~/.claude/skills/` 的源 |
-| `AGENTS.md` / `CLAUDE.md` | 两者 | 开发本仓库时的项目指令 |
-| `scripts/`、`assets/`、`tests/` | 两者 | 共用实现 |
+| `.codebuddy/models.json` | WorkBuddy | 自定义模型：直连 `api.deepseek.com` |
+| `AGENTS.md` | 三家 | **仅**放共通内容 |
+| `CLAUDE.md` | 仅 Claude Code | `@AGENTS.md` + Claude 专属 |
+| `CODEBUDDY.md` | 仅 WorkBuddy | WorkBuddy 专属 |
+| `scripts/`、`assets/`、`tests/` | 三家 | 共用实现 |
+
+三份项目指令文件是**按内容归属拆开的，不是按前端复制的**：三家都需要的东西只写一遍在
+`AGENTS.md`（复制三份会漂移），只有一家需要的写进那一家自己的文件，别的前端就不会在每个
+会话里白读。`tests/test_workbuddy_install.py` 里有测试守着这条分界，防止悄悄退化。
 
 Claude Code 只读自己的 skills 目录，无法像 Codex 那样就地加载本仓库，所以需要复制一次：
 
 ```bash
 python3 scripts/setup.py install-claude
 ```
+
+WorkBuddy 则是把两个环境变量合并进 `~/.workbuddy/settings.json`（保留其余设置不动）：
+
+```bash
+python3 scripts/setup.py install-workbuddy
+```
+
+它让 `lite` 变体指向直连 DeepSeek 的自定义模型，于是主会话用你选的模型编排、`Explore`
+子 agent 跑 DeepSeek。细节和已知限制见 `CODEBUDDY.md`。
 
 **请修改仓库 `.claude/` 下的文件，不要改已安装的副本**，改完重跑上面的命令。
 `setup.py check` 会在两边不一致时提示。两份 `SKILL.md` 是刻意不同的文档而非重复：
