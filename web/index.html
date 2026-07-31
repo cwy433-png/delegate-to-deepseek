@@ -1,0 +1,106 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="deepcodex-token" content="__DEEPCODEX_TOKEN__" />
+    <title>DeepCodex Preview</title>
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body>
+    <div class="app-shell">
+      <header class="topbar">
+        <div class="brand">
+          <div class="brand-mark">D</div>
+          <div>
+            <h1>DeepCodex</h1>
+            <p>DeepSeek V4 Flash · Codex App Server</p>
+          </div>
+        </div>
+        <div class="top-actions">
+          <button class="ghost" id="keyButton">更换 Key</button>
+          <button class="ghost danger" id="exitButton">退出</button>
+        </div>
+      </header>
+
+      <section class="workspace-card">
+        <div class="workspace-heading">
+          <div>
+            <span class="eyebrow">WORKSPACE</span>
+            <h2>选择要交给 Codex 的项目</h2>
+          </div>
+          <div class="status-pill" id="statusPill"><span></span><b>尚未连接</b></div>
+        </div>
+        <div class="workspace-controls">
+          <input id="workspaceInput" autocomplete="off" spellcheck="false" />
+          <button class="secondary" id="browseButton">选择文件夹</button>
+          <button class="primary" id="connectButton">连接项目</button>
+        </div>
+        <p class="privacy-note">独立配置保存在 ~/.deepcodex；默认关闭插件、网页搜索与分析遥测。</p>
+      </section>
+
+      <main class="main-grid">
+        <section class="conversation-card">
+          <div class="tabs" role="tablist">
+            <button class="tab active" data-tab="chat">对话</button>
+            <button class="tab" data-tab="diff">本轮 Diff <span id="diffDot"></span></button>
+            <button class="tab" data-tab="activity">活动</button>
+          </div>
+
+          <div class="panel active" id="chatPanel">
+            <div class="empty-state" id="emptyState">
+              <div class="orbit"><span></span></div>
+              <h3>Codex 内核，DeepSeek 主模型</h3>
+              <p>连接一个项目，然后直接描述你想完成的工作。命令越权时会在这里请求批准。</p>
+            </div>
+            <div class="messages" id="messages"></div>
+          </div>
+          <div class="panel" id="diffPanel"><pre id="diffContent">本轮还没有文件变更。</pre></div>
+          <div class="panel" id="activityPanel"><pre id="activityContent">DeepCodex GUI 已启动。</pre></div>
+
+          <div class="composer">
+            <textarea id="promptInput" rows="3" placeholder="例如：阅读这个项目，找出最值得先修的三个问题……" disabled></textarea>
+            <div class="composer-actions">
+              <button class="secondary stop" id="stopButton" disabled>停止</button>
+              <button class="primary send" id="sendButton" disabled>
+                <span>发送</span><small>⌘ / Ctrl + Enter</small>
+              </button>
+            </div>
+          </div>
+        </section>
+      </main>
+    </div>
+
+    <div class="modal-backdrop hidden" id="keyModal">
+      <form class="modal" id="keyForm">
+        <span class="eyebrow">FIRST RUN</span>
+        <h2>配置 DeepSeek API Key</h2>
+        <p>Key 只经由本机回环地址送入系统密钥库，不会写入 Codex 配置、日志或 Git。</p>
+        <label for="keyInput">API Key</label>
+        <input id="keyInput" type="password" autocomplete="off" placeholder="sk-…" />
+        <div class="modal-error" id="keyError"></div>
+        <div class="modal-actions">
+          <button type="button" class="ghost" id="keyCancel">取消</button>
+          <button type="submit" class="primary">安全保存</button>
+        </div>
+      </form>
+    </div>
+
+    <div class="modal-backdrop hidden" id="approvalModal">
+      <div class="modal approval-modal">
+        <span class="eyebrow">APPROVAL REQUIRED</span>
+        <h2 id="approvalTitle">允许执行命令？</h2>
+        <p id="approvalReason"></p>
+        <pre id="approvalDetail"></pre>
+        <div class="modal-actions">
+          <button class="ghost danger" id="declineButton">拒绝</button>
+          <button class="secondary" id="approveSessionButton">本次会话允许</button>
+          <button class="primary" id="approveButton">允许一次</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="toast hidden" id="toast"></div>
+    <script src="/app.js"></script>
+  </body>
+</html>

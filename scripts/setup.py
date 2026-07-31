@@ -1,5 +1,12 @@
 #!/usr/bin/env python3
-"""Install the DeepSeek Codex profile and collect its key in a macOS dialog."""
+"""Install the DeepSeek Codex profile and collect its key in a native dialog.
+
+macOS uses an AppleScript dialog and saves to Keychain; Windows 10/11 uses a
+native masked PowerShell/WinForms dialog and saves to Windows Credential
+Manager; other platforms rely on the ``DEEPSEEK_API_KEY`` environment variable.
+The key never appears in process arguments, shell history, Codex config, Git,
+or logs.
+"""
 
 from __future__ import annotations
 
@@ -13,6 +20,8 @@ import subprocess
 import sys
 import tempfile
 
+import win_cred  # local sibling module; inert outside Windows
+
 
 PROFILE_NAME = "deepseek-flash"
 SERVICE = "codex-deepseek-api"
@@ -20,6 +29,56 @@ MARKER = "# Managed by delegate-to-deepseek"
 KEY_DIALOG_SCRIPT = r'''
 set dialogResult to display dialog "Paste your DeepSeek API key. It will be stored in macOS Keychain and will not be written to Codex config." default answer "" with title "Configure DeepSeek for Codex" buttons {"Cancel", "Save"} default button "Save" cancel button "Cancel" with hidden answer
 return text returned of dialogResult
+'''.strip()
+# Kept in a temp file (never on the command line); the dialog only echoes the
+# typed key to stdout, so no secret is written to disk or to process arguments.
+WINDOWS_KEY_DIALOG_SCRIPT = r'''
+Add-Type -AssemblyName System.Windows.Forms
+Add-Type -AssemblyName System.Drawing
+[System.Windows.Forms.Application]::EnableVisualStyles()
+[Console]::OutputEncoding = [System.Text.Encoding]::UTF8
+
+$form = New-Object System.Windows.Forms.Form
+$form.Text = 'Configure DeepSeek for Codex'
+$form.StartPosition = 'CenterScreen'
+$form.ClientSize = New-Object System.Drawing.Size(560, 150)
+$form.FormBorderStyle = 'FixedDialog'
+$form.MaximizeBox = $false
+$form.MinimizeBox = $false
+
+$label = New-Object System.Windows.Forms.Label
+$label.Text = 'Paste your DeepSeek API key. It will be stored in Windows Credential Manager and will not be written to Codex config.'
+$label.AutoSize = $false
+$label.Size = New-Object System.Drawing.Size(520, 44)
+$label.Location = New-Object System.Drawing.Point(20, 12)
+
+$textbox = New-Object System.Windows.Forms.TextBox
+$textbox.UseSystemPasswordChar = $true
+$textbox.Size = New-Object System.Drawing.Size(520, 24)
+$textbox.Location = New-Object System.Drawing.Point(20, 62)
+
+$save = New-Object System.Windows.Forms.Button
+$save.Text = 'Save'
+$save.DialogResult = [System.Windows.Forms.DialogResult]::OK
+$save.Location = New-Object System.Drawing.Point(380, 100)
+
+$cancel = New-Object System.Windows.Forms.Button
+$cancel.Text = 'Cancel'
+$cancel.DialogResult = [System.Windows.Forms.DialogResult]::Cancel
+$cancel.Location = New-Object System.Drawing.Point(462, 100)
+
+$form.AcceptButton = $save
+$form.CancelButton = $cancel
+$form.Controls.Add($label)
+$form.Controls.Add($textbox)
+$form.Controls.Add($save)
+$form.Controls.Add($cancel)
+
+if ($form.ShowDialog() -eq [System.Windows.Forms.DialogResult]::OK) {
+    [Console]::Out.Write($textbox.Text)
+    exit 0
+}
+exit 130
 '''.strip()
 
 
@@ -36,14 +95,42 @@ def profile_path() -> Path:
     return codex_home() / f"{PROFILE_NAME}.config.toml"
 
 
-def profile_text() -> str:
-    root = skill_dir()
-    catalog = root / "assets" / "models.json"
-    key_command = root / "scripts" / "deepseek_key.py"
-    return f'''{MARKER}
+def toml_basic_string(value: str) -> str:
+    """Quote a path as a TOML basic string, escaping backslashes and quotes.
+
+    Windows paths contain backslashes (and may contain quotes or spaces), so a
+    raw interpolation would produce invalid TOML; this keeps the generated
+    profile parseable on every platform.
+    """
+    escaped: list[str] = []
+    for char in value:
+        if char == "\\":
+            escaped.append("\\\\")
+        elif char == '"':
+            escaped.append('\\"')
+        elif char == "\n":
+            escaped.append("\\n")
+        elif char == "\r":
+            escaped.append("\\r")
+        elif char == "\t":
+            escaped.append("\\t")
+        elif ord(char) < 0x20 or ord(char) == 0x7F:
+            escaped.append(f"\\u{ord(char):04X}")
+        else:
+            escaped.append(char)
+    return '"' + "".join(escaped) + '"'
+
+
+def _profile_text(
+    catalog: Path,
+    key_command: Path,
+    python_command: Path | None = None,
+) -> str:
+    python_command = python_command or Path(sys.executable)
+    return f"""{MARKER}
 model = "deepseek-v4-flash"
 model_provider = "deepseek"
-model_catalog_json = "{catalog}"
+model_catalog_json = {toml_basic_string(str(catalog))}
 model_reasoning_effort = "high"
 
 [model_providers.deepseek]
@@ -56,10 +143,19 @@ stream_idle_timeout_ms = 300000
 supports_websockets = false
 
 [model_providers.deepseek.auth]
-command = "{key_command}"
+command = {toml_basic_string(str(python_command))}
+args = [{toml_basic_string(str(key_command))}]
 timeout_ms = 5000
 refresh_interval_ms = 0
-'''
+"""
+
+
+def profile_text() -> str:
+    root = skill_dir()
+    return _profile_text(
+        root / "assets" / "models.json",
+        root / "scripts" / "deepseek_key.py",
+    )
 
 
 def install() -> int:
@@ -99,19 +195,32 @@ def apple_script_string(value: str) -> str:
 
 
 def show_message(message: str, *, critical: bool = False) -> None:
-    if platform.system() != "Darwin":
-        return
-    icon = "critical" if critical else "note"
-    script = (
-        f'display dialog {apple_script_string(message)} with title "DeepSeek for Codex" '
-        f'buttons {{"OK"}} default button "OK" with icon {icon}'
-    )
-    subprocess.run(
-        ["/usr/bin/osascript", "-e", script],
-        check=False,
-        capture_output=True,
-        text=True,
-    )
+    system = platform.system()
+    if system == "Darwin":
+        icon = "critical" if critical else "note"
+        script = (
+            f'display dialog {apple_script_string(message)} with title "DeepSeek for Codex" '
+            f'buttons {{"OK"}} default button "OK" with icon {icon}'
+        )
+        subprocess.run(
+            ["/usr/bin/osascript", "-e", script],
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+    elif system == "Windows":
+        import ctypes
+
+        flags = 0x10 if critical else 0x40
+        ctypes.windll.user32.MessageBoxW(None, message, "DeepSeek for Codex", flags)
+
+
+def validate_key(key: str) -> str | None:
+    if not key:
+        return "The API key cannot be empty."
+    if not key.startswith("sk-"):
+        return "The DeepSeek API key must start with sk-."
+    return None
 
 
 def prompt_for_key() -> tuple[str | None, int]:
@@ -124,11 +233,51 @@ def prompt_for_key() -> tuple[str | None, int]:
     if result.returncode != 0:
         return None, 130
     key = result.stdout.strip()
-    if not key:
-        show_message("The API key cannot be empty.", critical=True)
+    error = validate_key(key)
+    if error:
+        show_message(error, critical=True)
         return None, 1
-    if not key.startswith("sk-"):
-        show_message("The DeepSeek API key must start with sk-.", critical=True)
+    return key, 0
+
+
+def prompt_for_key_windows() -> tuple[str | None, int]:
+    powershell = shutil.which("powershell") or shutil.which("pwsh")
+    if not powershell:
+        print(
+            "powershell.exe was not found; cannot open the native key dialog.",
+            file=sys.stderr,
+        )
+        return None, 1
+    with tempfile.TemporaryDirectory(prefix="deepseek-key-dialog-") as tmp:
+        script = Path(tmp) / "key_dialog.ps1"
+        script.write_text(WINDOWS_KEY_DIALOG_SCRIPT, encoding="utf-8")
+        result = subprocess.run(
+            [
+                powershell,
+                "-NoProfile",
+                "-ExecutionPolicy",
+                "Bypass",
+                "-STA",
+                "-File",
+                str(script),
+            ],
+            check=False,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+        )
+    if result.returncode == 130:
+        return None, 130
+    if result.returncode != 0:
+        detail = result.stderr.strip()
+        if detail:
+            print(f"The key dialog failed: {detail}", file=sys.stderr)
+        return None, 1
+    key = result.stdout.strip()
+    error = validate_key(key)
+    if error:
+        show_message(error, critical=True)
         return None, 1
     return key, 0
 
@@ -163,13 +312,23 @@ def save_key_to_keychain(
     return result.returncode
 
 
-def store_key() -> int:
-    if platform.system() != "Darwin":
+def save_key_windows(key: str) -> int:
+    try:
+        win_cred.write_credential(SERVICE, key, user=getpass.getuser())
+    except OSError as error:
+        show_message(
+            "The API key could not be saved to Windows Credential Manager.",
+            critical=True,
+        )
         print(
-            "On this platform, set DEEPSEEK_API_KEY in the environment that launches Codex.",
+            f"Failed to save the DeepSeek API key to Windows Credential Manager: {error}",
             file=sys.stderr,
         )
         return 1
+    return 0
+
+
+def store_key_macos() -> int:
     while True:
         key, status = prompt_for_key()
         if key is not None:
@@ -187,6 +346,37 @@ def store_key() -> int:
         return status
     print("DeepSeek API key saved in macOS Keychain.")
     return 0
+
+
+def store_key_windows() -> int:
+    while True:
+        key, status = prompt_for_key_windows()
+        if key is not None:
+            break
+        if status == 130:
+            print("DeepSeek configuration cancelled.", file=sys.stderr)
+            return status
+    try:
+        status = save_key_windows(key)
+    finally:
+        key = ""
+    if status != 0:
+        return status
+    print("DeepSeek API key saved in Windows Credential Manager.")
+    return 0
+
+
+def store_key() -> int:
+    system = platform.system()
+    if system == "Darwin":
+        return store_key_macos()
+    if system == "Windows":
+        return store_key_windows()
+    print(
+        "On this platform, set DEEPSEEK_API_KEY in the environment that launches Codex.",
+        file=sys.stderr,
+    )
+    return 1
 
 
 def configure() -> int:
@@ -224,8 +414,8 @@ def check() -> int:
         for problem in problems:
             print(f"ERROR: {problem}", file=sys.stderr)
         print(
-            "Open the key window with: python3 "
-            "~/.codex/skills/delegate-to-deepseek/scripts/setup.py",
+            f"Open the key window with: {sys.executable} "
+            f"{skill_dir() / 'scripts' / 'setup.py'}",
             file=sys.stderr,
         )
         return 1

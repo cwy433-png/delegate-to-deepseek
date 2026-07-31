@@ -7,13 +7,14 @@ import argparse
 import os
 from pathlib import Path
 import platform
-import select
+import queue
 import shlex
 import shutil
 import signal
 import subprocess
 import sys
 import tempfile
+import threading
 import time
 
 
@@ -48,8 +49,32 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
-def terminate_process_group(process: subprocess.Popen[str]) -> None:
+def popen_kwargs() -> dict[str, object]:
+    """Child-process creation flags that work on the current platform.
+
+    POSIX puts each child in its own session/process group so the whole tree
+    can be signalled; Windows uses a new process group so `taskkill /T` can
+    tear the tree down without POSIX-only APIs.
+    """
+    if os.name == "nt":
+        return {"creationflags": subprocess.CREATE_NEW_PROCESS_GROUP}
+    return {"start_new_session": True}
+
+
+def terminate_process_tree(process: subprocess.Popen[str]) -> None:
+    """Terminate ``process`` and its descendants without POSIX-only APIs."""
     if process.poll() is not None:
+        return
+    if os.name == "nt":
+        subprocess.run(
+            ["taskkill", "/PID", str(process.pid), "/T", "/F"],
+            check=False,
+            capture_output=True,
+        )
+        try:
+            process.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            process.kill()
         return
     try:
         os.killpg(process.pid, signal.SIGTERM)
@@ -61,30 +86,105 @@ def terminate_process_group(process: subprocess.Popen[str]) -> None:
             pass
 
 
-def start_curl_bridge(scripts_dir: Path) -> tuple[subprocess.Popen[str], str]:
+class OutputPump:
+    """Drain a child's stdout on a daemon thread into a bounded queue.
+
+    ``select.select`` only supports sockets on Windows, so this thread-based
+    pump is the cross-platform replacement for the POSIX-only pipe select.
+    """
+
+    def __init__(self, stream: object):
+        self._stream = stream
+        self._lines: queue.Queue[str | None] = queue.Queue()
+        self._thread = threading.Thread(
+            target=self._run,
+            name="delegate-output-pump",
+            daemon=True,
+        )
+
+    def _run(self) -> None:
+        try:
+            for line in self._stream:  # type: ignore[union-attr]
+                self._lines.put(line)
+        finally:
+            self._lines.put(None)
+
+    def start(self) -> None:
+        self._thread.start()
+
+    def next_line(self, timeout: float) -> str | None:
+        """Return the next line, ``None`` on timeout, or raise ``EOFError``."""
+        try:
+            item = self._lines.get(timeout=timeout)
+        except queue.Empty:
+            return None
+        if item is None:
+            raise EOFError("output stream closed")
+        return item
+
+
+def start_curl_bridge(
+    scripts_dir: Path,
+    *,
+    stderr: object | None = None,
+) -> tuple[subprocess.Popen[str], str]:
     bridge = scripts_dir / "curl_bridge.py"
     key_helper = scripts_dir / "deepseek_key.py"
     process = subprocess.Popen(
         [sys.executable, str(bridge), "--key-command", str(key_helper)],
         stdout=subprocess.PIPE,
+        stderr=stderr,
         text=True,
         bufsize=1,
-        start_new_session=True,
+        **popen_kwargs(),
     )
     assert process.stdout is not None
-    readable, _, _ = select.select([process.stdout], [], [], 10.0)
-    if not readable:
-        terminate_process_group(process)
+    pump = OutputPump(process.stdout)
+    pump.start()
+    try:
+        line = pump.next_line(10.0)
+    except EOFError:
+        line = None
+    if line is None:
+        terminate_process_tree(process)
         raise RuntimeError("the local curl bridge did not start")
-    base_url = process.stdout.readline().strip()
+    base_url = line.strip()
     if process.poll() is not None or not base_url.startswith("http://127.0.0.1:"):
-        terminate_process_group(process)
+        terminate_process_tree(process)
         raise RuntimeError("the local curl bridge returned an invalid address")
     return process, base_url
 
 
+def stream_child_output(
+    process: subprocess.Popen[str],
+    deadline: float,
+) -> int | None:
+    """Stream child stdout to stderr until EOF or the deadline.
+
+    Returns ``None`` on EOF and 124 when the deadline expires first.
+    """
+    assert process.stdout is not None
+    pump = OutputPump(process.stdout)
+    pump.start()
+    while True:
+        try:
+            line = pump.next_line(1.0)
+        except EOFError:
+            return None
+        if line is None:
+            if process.poll() is not None:
+                return None
+            if time.monotonic() >= deadline:
+                return 124
+            continue
+        print(line, end="", file=sys.stderr, flush=True)
+
+
 def main() -> int:
     args = parse_args()
+    if args.transport == "curl" and platform.system() != "Darwin":
+        print("--transport curl is only supported on macOS.", file=sys.stderr)
+        return 2
     codex = shutil.which("codex")
     if not codex:
         print("codex executable not found", file=sys.stderr)
@@ -190,7 +290,10 @@ def main() -> int:
         command.append("-")
 
         if args.dry_run:
-            print(shlex.join(command))
+            if os.name == "nt":
+                print(subprocess.list2cmdline(command))
+            else:
+                print(shlex.join(command))
             return 0
 
         try:
@@ -201,7 +304,7 @@ def main() -> int:
                 stderr=subprocess.STDOUT,
                 text=True,
                 bufsize=1,
-                start_new_session=True,
+                **popen_kwargs(),
             )
             assert process.stdin is not None
             assert process.stdout is not None
@@ -210,24 +313,19 @@ def main() -> int:
 
             deadline = time.monotonic() + args.timeout
             try:
-                while process.poll() is None:
-                    if time.monotonic() >= deadline:
-                        print(
-                            f"DeepSeek subagent timed out after {args.timeout} seconds.",
-                            file=sys.stderr,
-                        )
-                        terminate_process_group(process)
-                        return 124
-                    readable, _, _ = select.select([process.stdout], [], [], 1.0)
-                    if readable:
-                        line = process.stdout.readline()
-                        if line:
-                            print(line, end="", file=sys.stderr, flush=True)
-                for line in process.stdout:
-                    print(line, end="", file=sys.stderr, flush=True)
+                timeout_status = stream_child_output(process, deadline)
             except KeyboardInterrupt:
-                terminate_process_group(process)
+                terminate_process_tree(process)
                 return 130
+            if timeout_status == 124:
+                print(
+                    f"DeepSeek subagent timed out after {args.timeout} seconds.",
+                    file=sys.stderr,
+                )
+                terminate_process_tree(process)
+                return 124
+
+            process.wait()
 
             if process.returncode != 0:
                 print(
@@ -243,7 +341,7 @@ def main() -> int:
             return 0
         finally:
             if bridge_process is not None:
-                terminate_process_group(bridge_process)
+                terminate_process_tree(bridge_process)
 
 
 if __name__ == "__main__":
