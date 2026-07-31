@@ -12,11 +12,10 @@ Run DeepSeek V4 Flash inside a separate Codex CLI process. Keep the current Code
 Before the first delegation, run:
 
 ```bash
-python3 ~/.codex/skills/delegate-to-deepseek/scripts/setup.py install
-python3 ~/.codex/skills/delegate-to-deepseek/scripts/setup.py check
+python3 ~/.codex/skills/delegate-to-deepseek/scripts/setup.py
 ```
 
-If `check` reports a missing key, ask the user to run the interactive `store-key` command shown by the script in their own terminal. Never request, print, log, or commit the key.
+On macOS, use this command to install the profile and open a masked API-key window. Let the user paste the key and click **Save**; store it in Keychain without placing it in process arguments, shell history, Codex config, or Git. If delegation finds no key later, let the launcher open the same window automatically. Never request, print, log, or commit the key in chat.
 
 ## Choose the delegation mode
 

@@ -74,7 +74,8 @@ def main() -> int:
     task = f"{task}\n\n{CHILD_GUARD}\n"
 
     if not args.dry_run:
-        key_helper = Path(__file__).resolve().parent / "deepseek_key.py"
+        scripts_dir = Path(__file__).resolve().parent
+        key_helper = scripts_dir / "deepseek_key.py"
         key_check = subprocess.run(
             [sys.executable, str(key_helper)],
             check=False,
@@ -82,12 +83,22 @@ def main() -> int:
             text=True,
         )
         if key_check.returncode != 0 or not key_check.stdout.strip():
-            print(
-                "DeepSeek API key is unavailable. Run: python3 "
-                "~/.codex/skills/delegate-to-deepseek/scripts/setup.py store-key",
-                file=sys.stderr,
+            print("Opening the DeepSeek API key window...", file=sys.stderr)
+            setup_result = subprocess.run(
+                [sys.executable, str(scripts_dir / "setup.py"), "configure"],
+                check=False,
             )
-            return 3
+            if setup_result.returncode != 0:
+                return 3
+            key_check = subprocess.run(
+                [sys.executable, str(key_helper)],
+                check=False,
+                capture_output=True,
+                text=True,
+            )
+            if key_check.returncode != 0 or not key_check.stdout.strip():
+                print("DeepSeek API key is still unavailable.", file=sys.stderr)
+                return 3
 
     sandbox = "read-only" if args.mode == "review" else "workspace-write"
     schema = Path(__file__).resolve().parent.parent / "assets" / "result.schema.json"
