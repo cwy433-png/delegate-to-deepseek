@@ -32,9 +32,19 @@ SKILL_NAME = "delegate-to-deepseek"
 # its frontmatter, the wrapper in its header comment -- so an unrelated file
 # that happens to sit at the target path is never clobbered.
 MARKER_CLAUDE = SKILL_NAME
-# The custom model id defined in .codebuddy/models.json. WorkBuddy reaches
-# api.deepseek.com directly through it, so the build in use is knowable.
-WORKBUDDY_MODEL_ID = "deepseek-v4-flash-direct"
+# WorkBuddy sends a custom model's id verbatim as the API `model` field, so this
+# must be the real DeepSeek slug rather than a repository-local alias.
+WORKBUDDY_MODEL_ID = "deepseek-v4-flash"
+WORKBUDDY_AGENT_MODEL_ID = f"custom-local:{WORKBUDDY_MODEL_ID}"
+LEGACY_WORKBUDDY_MODEL_ID = "deepseek-v4-flash-direct"
+MANAGED_WORKBUDDY_LITE_MODEL_IDS = (
+    LEGACY_WORKBUDDY_MODEL_ID,
+    WORKBUDDY_MODEL_ID,
+    WORKBUDDY_AGENT_MODEL_ID,
+)
+WORKBUDDY_MACOS_NODE_OPTION = "--dns-result-order=ipv6first"
+WORKBUDDY_AGENT_NAME = "deepseek"
+MARKER_WORKBUDDY_AGENT = "Managed by delegate-to-deepseek"
 # (filename, needs the executable bit). Both wrappers install on every platform:
 # the inactive one is inert, and shipping both keeps an installed copy complete
 # when a home directory is shared or synced between machines.
@@ -309,6 +319,187 @@ def workbuddy_settings_path() -> Path:
     return workbuddy_home() / "settings.json"
 
 
+def codebuddy_home() -> Path:
+    """Return the user-level directory for portable models and agents.
+
+    WorkBuddy keeps desktop settings under ``~/.workbuddy`` but discovers
+    user-level custom models and agents under ``~/.codebuddy``.
+    """
+    configured = os.environ.get("CODEBUDDY_CONFIG_DIR")
+    return Path(configured).expanduser() if configured else Path.home() / ".codebuddy"
+
+
+def workbuddy_model_source() -> Path:
+    return skill_dir() / ".codebuddy" / "models.json"
+
+
+def workbuddy_models_target() -> Path:
+    return codebuddy_home() / "models.json"
+
+
+def workbuddy_agent_source() -> Path:
+    return skill_dir() / ".codebuddy" / "agents" / f"{WORKBUDDY_AGENT_NAME}.md"
+
+
+def workbuddy_agent_target() -> Path:
+    return codebuddy_home() / "agents" / f"{WORKBUDDY_AGENT_NAME}.md"
+
+
+def workbuddy_model_definition() -> dict[str, object]:
+    source = workbuddy_model_source()
+    document = json.loads(source.read_text(encoding="utf-8"))
+    models = document.get("models") if isinstance(document, dict) else None
+    if not isinstance(models, list):
+        raise ValueError(f'"models" must be an array in {source}')
+    for model in models:
+        if isinstance(model, dict) and model.get("id") == WORKBUDDY_MODEL_ID:
+            return model
+    raise ValueError(f"model {WORKBUDDY_MODEL_ID!r} is missing from {source}")
+
+
+def workbuddy_model_is_compatible(model: object) -> bool:
+    """Whether an existing entry is safe for the installed agent to use."""
+    if not isinstance(model, dict):
+        return False
+    return (
+        model.get("id") == WORKBUDDY_MODEL_ID
+        and model.get("url")
+        == "https://api.deepseek.com/v1/chat/completions"
+        and model.get("apiKey") == "${DEEPSEEK_API_KEY}"
+        and model.get("supportsToolCall") is True
+    )
+
+
+def workbuddy_model_is_current() -> bool:
+    target = workbuddy_models_target()
+    if not target.is_file():
+        return False
+    try:
+        document = json.loads(target.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError):
+        return False
+    if not isinstance(document, dict):
+        return False
+    models = document.get("models")
+    available = document.get("availableModels")
+    return (
+        isinstance(models, list)
+        and any(workbuddy_model_is_compatible(model) for model in models)
+        and isinstance(available, list)
+        and WORKBUDDY_MODEL_ID in available
+    )
+
+
+def install_workbuddy_model() -> int:
+    """Merge the repository's model entry into the user-level model catalog."""
+    source = workbuddy_model_source()
+    if not source.is_file():
+        print(f"Custom model definition missing: {source}", file=sys.stderr)
+        return 1
+    try:
+        desired = workbuddy_model_definition()
+    except (json.JSONDecodeError, OSError, ValueError) as error:
+        print(f"Invalid custom model definition: {error}", file=sys.stderr)
+        return 1
+
+    target = workbuddy_models_target()
+    document: dict[str, object] = {}
+    if target.exists():
+        try:
+            parsed = json.loads(target.read_text(encoding="utf-8") or "{}")
+        except (json.JSONDecodeError, OSError) as error:
+            print(
+                f"Refusing to rewrite unparsable models file: {target} ({error})",
+                file=sys.stderr,
+            )
+            return 1
+        if not isinstance(parsed, dict):
+            print(f"Refusing to rewrite non-object models file: {target}", file=sys.stderr)
+            return 1
+        document = parsed
+
+    current_models = document.get("models")
+    if current_models is not None and not isinstance(current_models, list):
+        print(f'Refusing to overwrite a non-array "models" in {target}', file=sys.stderr)
+        return 1
+    models = list(current_models or [])
+    matching = [
+        model
+        for model in models
+        if isinstance(model, dict) and model.get("id") == WORKBUDDY_MODEL_ID
+    ]
+    if matching and not all(workbuddy_model_is_compatible(model) for model in matching):
+        print(
+            f"Refusing to overwrite a conflicting model named {WORKBUDDY_MODEL_ID!r} "
+            f"in {target}",
+            file=sys.stderr,
+        )
+        return 1
+    if not matching:
+        models.append(desired)
+
+    current_available = document.get("availableModels")
+    if current_available is not None and not isinstance(current_available, list):
+        print(
+            f'Refusing to overwrite a non-array "availableModels" in {target}',
+            file=sys.stderr,
+        )
+        return 1
+    available = list(current_available or [])
+    if WORKBUDDY_MODEL_ID not in available:
+        available.append(WORKBUDDY_MODEL_ID)
+
+    document["models"] = models
+    document["availableModels"] = available
+    desired_text = json.dumps(document, ensure_ascii=False, indent=2) + "\n"
+    if target.is_file() and target.read_text(encoding="utf-8") == desired_text:
+        target.chmod(0o600)
+        print(f"WorkBuddy global model already current: {target}")
+        return 0
+    target.parent.mkdir(parents=True, exist_ok=True)
+    write_file_atomically(target, desired_text, mode=0o600)
+    print(f"Installed WorkBuddy global model: {target}")
+    return 0
+
+
+def workbuddy_agent_is_current() -> bool:
+    source = workbuddy_agent_source()
+    target = workbuddy_agent_target()
+    return (
+        source.is_file()
+        and target.is_file()
+        and source.read_text(encoding="utf-8") == target.read_text(encoding="utf-8")
+    )
+
+
+def install_workbuddy_agent() -> int:
+    """Install the native WorkBuddy subagent without clobbering user content."""
+    source = workbuddy_agent_source()
+    if not source.is_file():
+        print(f"WorkBuddy agent definition missing: {source}", file=sys.stderr)
+        return 1
+    desired = source.read_text(encoding="utf-8")
+    if MARKER_WORKBUDDY_AGENT not in desired:
+        print(f"WorkBuddy agent marker missing: {source}", file=sys.stderr)
+        return 1
+    target = workbuddy_agent_target()
+    if target.exists():
+        current = target.read_text(encoding="utf-8")
+        if current == desired:
+            print(f"WorkBuddy agent already current: {target}")
+            return 0
+        if MARKER_WORKBUDDY_AGENT not in current:
+            print(
+                f"Refusing to overwrite unmanaged WorkBuddy agent: {target}",
+                file=sys.stderr,
+            )
+            return 1
+    target.parent.mkdir(parents=True, exist_ok=True)
+    write_file_atomically(target, desired)
+    print(f"Installed WorkBuddy agent: {target}")
+    return 0
+
+
 def stored_key() -> str | None:
     """Return the stored DeepSeek key, or ``None``.
 
@@ -325,22 +516,42 @@ def stored_key() -> str | None:
     return key if result.returncode == 0 and key else None
 
 
-def workbuddy_env_updates(key: str) -> dict[str, str]:
-    """The two variables WorkBuddy needs to reach DeepSeek directly.
+def workbuddy_env_updates(
+    key: str,
+    current_env: dict[str, object] | None = None,
+) -> dict[str, str]:
+    """The environment WorkBuddy needs to reach DeepSeek directly.
 
     A custom model resolves ``apiKey`` only by expanding ``${VAR}`` from
-    ``process.env``, so the key has to arrive as an environment variable;
-    ``CODEBUDDY_SMALL_FAST_MODEL`` then points the ``lite`` variant -- the one
-    ``Explore`` sub-agents declare -- at that model.
+    ``process.env``, so the key has to arrive as an environment variable.
+    WorkBuddy's Agent tool cannot select a model per call; built-in subagents
+    such as Explore request the ``lite`` variant instead. Point that variant at
+    the namespaced custom-model id so automatic delegation reaches DeepSeek
+    rather than WorkBuddy's built-in model with the same bare id.
     """
-    return {
+    updates = {
         "DEEPSEEK_API_KEY": key,
-        "CODEBUDDY_SMALL_FAST_MODEL": WORKBUDDY_MODEL_ID,
+        "CODEBUDDY_SMALL_FAST_MODEL": WORKBUDDY_AGENT_MODEL_ID,
     }
+    if platform.system() == "Darwin":
+        node_options = str((current_env or {}).get("NODE_OPTIONS") or "").split()
+        if WORKBUDDY_MACOS_NODE_OPTION not in node_options:
+            node_options.append(WORKBUDDY_MACOS_NODE_OPTION)
+        updates["NODE_OPTIONS"] = " ".join(node_options)
+    return updates
+
+
+def workbuddy_node_options_are_current(env: dict[str, object]) -> bool:
+    if platform.system() != "Darwin":
+        return True
+    node_options = env.get("NODE_OPTIONS")
+    return isinstance(node_options, str) and (
+        WORKBUDDY_MACOS_NODE_OPTION in node_options.split()
+    )
 
 
 def workbuddy_env_is_current() -> bool:
-    """Whether WorkBuddy's settings already point the lite variant at DeepSeek.
+    """Whether WorkBuddy's settings make the DeepSeek key available.
 
     Checks that a key is present without reading its value anywhere it could be
     printed.
@@ -355,34 +566,20 @@ def workbuddy_env_is_current() -> bool:
     env = settings.get("env") if isinstance(settings, dict) else None
     if not isinstance(env, dict):
         return False
-    return bool(env.get("DEEPSEEK_API_KEY")) and (
-        env.get("CODEBUDDY_SMALL_FAST_MODEL") == WORKBUDDY_MODEL_ID
+    return (
+        bool(env.get("DEEPSEEK_API_KEY"))
+        and env.get("CODEBUDDY_SMALL_FAST_MODEL") == WORKBUDDY_AGENT_MODEL_ID
+        and workbuddy_node_options_are_current(env)
     )
 
 
 def install_workbuddy() -> int:
-    """Merge the DeepSeek variables into WorkBuddy's settings.
+    """Install the global model and agent, then expose the key to WorkBuddy.
 
     WorkBuddy's ``settings.json`` holds unrelated user state (enabled plugins,
     channel configuration), so this reads, merges, and writes back rather than
     replacing the file, and refuses to touch it at all if it does not parse.
     """
-    models = skill_dir() / ".codebuddy" / "models.json"
-    if not models.is_file():
-        print(f"Custom model definition missing: {models}", file=sys.stderr)
-        return 1
-
-    key = stored_key()
-    if key is None:
-        print("Opening the DeepSeek API key window...", file=sys.stderr)
-        status = store_key()
-        if status != 0:
-            return status
-        key = stored_key()
-        if key is None:
-            print("DeepSeek API key is still unavailable.", file=sys.stderr)
-            return 3
-
     target = workbuddy_settings_path()
     if not target.parent.is_dir():
         print(
@@ -411,11 +608,38 @@ def install_workbuddy() -> int:
     if current_env is not None and not isinstance(current_env, dict):
         print(f'Refusing to overwrite a non-object "env" in {target}', file=sys.stderr)
         return 1
+    if isinstance(current_env, dict):
+        node_options = current_env.get("NODE_OPTIONS")
+        if node_options is not None and not isinstance(node_options, str):
+            print(
+                f'Refusing to overwrite a non-string "env.NODE_OPTIONS" in {target}',
+                file=sys.stderr,
+            )
+            return 1
+
+    status = install_workbuddy_model()
+    if status != 0:
+        return status
+    status = install_workbuddy_agent()
+    if status != 0:
+        return status
+
+    key = stored_key()
+    if key is None:
+        print("Opening the DeepSeek API key window...", file=sys.stderr)
+        status = store_key()
+        if status != 0:
+            return status
+        key = stored_key()
+        if key is None:
+            print("DeepSeek API key is still unavailable.", file=sys.stderr)
+            return 3
 
     env = dict(current_env or {})
-    updates = workbuddy_env_updates(key)
+    updates = workbuddy_env_updates(key, env)
     key = ""
     if all(env.get(name) == value for name, value in updates.items()):
+        target.chmod(0o600)
         print(f"WorkBuddy settings already current: {target}")
         return 0
 
@@ -427,7 +651,7 @@ def install_workbuddy() -> int:
         mode=0o600,
     )
     print(f"Updated WorkBuddy settings: {target}")
-    print("Restart WorkBuddy so it picks up the new environment.")
+    print("Restart WorkBuddy so it discovers the global model and agent.")
     return 0
 
 
@@ -663,9 +887,14 @@ def check() -> int:
         )
 
     # WorkBuddy is optional too, and only worth mentioning once it is installed.
-    if workbuddy_home().is_dir() and not workbuddy_env_is_current():
+    if workbuddy_home().is_dir() and not (
+        workbuddy_env_is_current()
+        and workbuddy_model_is_current()
+        and workbuddy_agent_is_current()
+    ):
         print(
-            f"NOTE: WorkBuddy is not pointed at DeepSeek yet. Configure it with: "
+            f"NOTE: WorkBuddy's DeepSeek model or agent is missing or stale. "
+            f"Configure it with: "
             f"{sys.executable} {skill_dir() / 'scripts' / 'setup.py'} install-workbuddy",
             file=sys.stderr,
         )

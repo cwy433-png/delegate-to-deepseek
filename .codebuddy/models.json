@@ -1,9 +1,9 @@
 {
   "models": [
     {
-      "id": "deepseek-v4-flash-direct",
+      "id": "deepseek-v4-flash",
       "name": "DeepSeek V4 Flash (direct)",
-      "url": "https://api.deepseek.com",
+      "url": "https://api.deepseek.com/v1/chat/completions",
       "apiKey": "${DEEPSEEK_API_KEY}",
       "vendor": "DeepSeek",
       "maxInputTokens": 1000000,
@@ -14,11 +14,14 @@
       "supportsImages": false,
       "temperature": 1,
       "descriptionZh": "直连 api.deepseek.com，构建版本可知；用自己的 API key 计费",
-      "descriptionEn": "Direct to api.deepseek.com on your own key, so the build is known",
+      "descriptionEn": "Direct to api.deepseek.com on your own key; managed by delegate-to-deepseek",
       "relatedModels": {
-        "lite": "deepseek-v4-flash-direct",
-        "reasoning": "deepseek-v4-flash-direct"
+        "lite": "deepseek-v4-flash",
+        "reasoning": "deepseek-v4-flash"
       }
     }
+  ],
+  "availableModels": [
+    "deepseek-v4-flash"
   ]
 }

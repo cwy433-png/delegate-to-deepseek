@@ -39,15 +39,16 @@ python3 -m unittest discover -s tests -v
 python3 -m py_compile scripts/*.py
 ```
 
-## 仓库布局：一个仓库，两个前端
+## 仓库布局：一个仓库，三个前端
 
-同一份实现被两个 agent 外壳消费，但各自读不同的文件：
+同一份实现被三个 agent 外壳消费，但各自读不同的文件：
 
 | 路径 | 谁读 | 说明 |
 | --- | --- | --- |
 | `SKILL.md`、`agents/openai.yaml` | Codex CLI | 仓库本身就是 `~/.codex/skills/<name>/` |
 | `.claude/skills/delegate-to-deepseek/` | Claude Code | 项目级 skill，同时是复制到 `~/.claude/skills/` 的源 |
-| `.codebuddy/models.json` | WorkBuddy | 自定义模型：直连 `api.deepseek.com` |
+| `.codebuddy/models.json` | WorkBuddy | 全局模型目录的源码：直连 DeepSeek Chat Completions |
+| `.codebuddy/agents/deepseek.md` | WorkBuddy | 全局 `deepseek` 子 agent 的源码 |
 | `AGENTS.md` | 三家 | **仅**放共通内容 |
 | `CLAUDE.md` | 仅 Claude Code | `@AGENTS.md` + Claude 专属 |
 | `CODEBUDDY.md` | 仅 WorkBuddy | WorkBuddy 专属 |
@@ -63,14 +64,17 @@ Claude Code 只读自己的 skills 目录，无法像 Codex 那样就地加载�
 python3 scripts/setup.py install-claude
 ```
 
-WorkBuddy 则是把两个环境变量合并进 `~/.workbuddy/settings.json`（保留其余设置不动）：
+WorkBuddy 会把模型和原生 `deepseek` agent 安装到用户级 `~/.codebuddy/`，再把密钥环境合并进
+`~/.workbuddy/settings.json`（保留其余设置不动）：
 
 ```bash
 python3 scripts/setup.py install-workbuddy
 ```
 
-它让 `lite` 变体指向直连 DeepSeek 的自定义模型，于是主会话用你选的模型编排、`Explore`
-子 agent 跑 DeepSeek。细节和已知限制见 `CODEBUDDY.md`。
+安装器会把 WorkBuddy 的全局 `lite` 变体映射到直连的 `deepseek-v4-flash`，因此 Explore
+等内置子 agent 自动走 DeepSeek；这是必需的，因为 WorkBuddy 的 Agent 工具不能逐次指定
+子 agent 模型。也可以直接要求 WorkBuddy “调用 deepseek agent”进行显式委派。细节和已知
+限制见 `CODEBUDDY.md`。
 
 **请修改仓库 `.claude/` 下的文件，不要改已安装的副本**，改完重跑上面的命令。
 `setup.py check` 会在两边不一致时提示。两份 `SKILL.md` 是刻意不同的文档而非重复：

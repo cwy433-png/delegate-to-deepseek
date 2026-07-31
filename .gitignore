@@ -6,3 +6,4 @@ __pycache__/
 CODEBUDDY.local.md
 CLAUDE.local.md
 .codebuddy/models.local.json
+.codebuddy/settings.local.json
