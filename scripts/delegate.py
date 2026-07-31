@@ -431,9 +431,13 @@ def main() -> int:
             text=True,
         )
         if key_check.returncode != 0 or not key_check.stdout.strip():
+            # Only the codex backend needs the Codex profile, so a Claude Code
+            # user is asked for the key without also having a Codex profile
+            # written into their ~/.codex.
+            setup_action = "store-key" if args.backend == "claude" else "configure"
             print("Opening the DeepSeek API key window...", file=sys.stderr)
             setup_result = subprocess.run(
-                [sys.executable, str(scripts_dir / "setup.py"), "configure"],
+                [sys.executable, str(scripts_dir / "setup.py"), setup_action],
                 check=False,
             )
             if setup_result.returncode != 0:

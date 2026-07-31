@@ -4,6 +4,7 @@ import argparse
 import json
 import os
 from pathlib import Path
+import subprocess
 import sys
 import unittest
 from unittest import mock
@@ -146,6 +147,34 @@ class FinalAnswerTests(unittest.TestCase):
 
     def test_missing_result_event_yields_none(self) -> None:
         self.assertIsNone(self.extract([json.dumps({"type": "system"}) + "\n"]))
+
+
+class MissingKeySetupTests(unittest.TestCase):
+    """A missing key opens the key window, but must not install extra state."""
+
+    def setup_action_for(self, backend: str) -> str:
+        no_key = subprocess.CompletedProcess([], returncode=1, stdout="", stderr="")
+        calls: list[list[str]] = []
+
+        def fake_run(command, **_kwargs):
+            calls.append([str(part) for part in command])
+            return no_key
+
+        argv = ["delegate.py", "--backend", backend, "--task", "t", "--cwd", os.getcwd()]
+        with mock.patch.object(sys, "argv", argv), mock.patch.object(
+            delegate.subprocess, "run", side_effect=fake_run
+        ):
+            delegate.main()
+
+        setup_calls = [call for call in calls if call[1].endswith("setup.py")]
+        self.assertTrue(setup_calls, "setup.py was never invoked")
+        return setup_calls[0][2]
+
+    def test_claude_backend_only_stores_the_key(self) -> None:
+        self.assertEqual(self.setup_action_for("claude"), "store-key")
+
+    def test_codex_backend_also_installs_the_profile(self) -> None:
+        self.assertEqual(self.setup_action_for("codex"), "configure")
 
 
 class BackendGuardTests(unittest.TestCase):
