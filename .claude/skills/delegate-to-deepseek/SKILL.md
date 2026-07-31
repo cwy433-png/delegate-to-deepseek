@@ -44,7 +44,11 @@ so the tool result is the answer. A review turn typically takes 15-40s.
 - `--structured` — emit JSON matching `assets/result.schema.json` (status,
   summary, findings, changes, checks, risks). stdout is bare JSON, safe to
   `json.loads`.
-- `--model deepseek-v4-pro` — a stronger DeepSeek model for harder tasks.
+- `--model <slug>` — keep the default `deepseek-v4-flash`, which tracks the
+  latest build (`DeepSeek-V4-Flash-0731` since 2026-07-31, Terminal Bench 2.1
+  82.7). Do not reach for `deepseek-v4-pro` as the "stronger" option: it is
+  still the preview build, and DeepSeek reports Flash-0731 far exceeding
+  V4-Pro-Preview, so it is likely a downgrade for agentic coding work.
 - `--reasoning max` — for genuinely hard problems; otherwise keep `high`.
 - `--add-dir <path>` — grant an extra readable directory.
 - `--backend codex` — run the child in Codex CLI instead. Slower (~60s) and

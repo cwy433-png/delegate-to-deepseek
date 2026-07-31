@@ -26,7 +26,12 @@ prefixes its JSON with prose, so `json.loads` on its stdout fails. Prefer
 `codex` when `review` must be enforced by an OS sandbox rather than by a tool
 allowlist, or when the child needs `apply_patch` and web search.
 
-The `claude` backend also accepts `--model deepseek-v4-pro` for harder tasks.
+Keep the default `deepseek-v4-flash`. The slug tracks the latest build, which
+since 2026-07-31 is the retrained `DeepSeek-V4-Flash-0731` (Terminal Bench 2.1
+82.7). `deepseek-v4-pro` is still the preview build — DeepSeek's changelog says
+that upgrade shipped for Flash only and that Flash-0731 far exceeds
+V4-Pro-Preview — so switching to Pro is likely a downgrade for agentic coding
+work until its official release lands.
 
 ## Prepare the profile
 

@@ -56,7 +56,10 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--model",
         default="deepseek-v4-flash",
-        help="DeepSeek model slug; claude backend also accepts deepseek-v4-pro.",
+        help=(
+            "DeepSeek model slug. The default tracks the latest Flash build; "
+            "deepseek-v4-pro is still the preview build and is not an upgrade."
+        ),
     )
     parser.add_argument("--profile", default="deepseek-flash", help="Codex profile name.")
     parser.add_argument("--timeout", type=int, default=1800, help="Seconds before termination.")
