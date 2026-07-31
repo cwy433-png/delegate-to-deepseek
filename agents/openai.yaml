@@ -1,0 +1,6 @@
+interface:
+  display_name: "Delegate to DeepSeek"
+  short_description: "Run DeepSeek V4 Flash as a Codex subagent"
+  default_prompt: "Use $delegate-to-deepseek to investigate this task with a read-only DeepSeek subagent and report verified findings."
+policy:
+  allow_implicit_invocation: true
