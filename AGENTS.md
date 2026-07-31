@@ -1,30 +1,36 @@
 # Working on this repository
 
-This repository is one skill that two agent harnesses consume differently. It
-launches DeepSeek V4 Flash as a bounded subagent inside a separate Codex CLI or
-Claude Code process.
+This repository is one skill that several agent harnesses consume differently.
+It launches DeepSeek V4 Flash as a bounded subagent inside a separate Codex CLI
+or Claude Code process.
 
-## Which harness reads what
+**This file holds only what every harness needs.** Anything true of one harness
+alone belongs in that harness's own file, so the others do not pay for it in
+every session:
+
+| Scope | File | Loaded by |
+| --- | --- | --- |
+| Shared | `AGENTS.md` | Codex, Claude Code (via `CLAUDE.md`), WorkBuddy |
+| Claude Code only | `CLAUDE.md` | Claude Code |
+| WorkBuddy only | `CODEBUDDY.md`, `.codebuddy/` | WorkBuddy |
+
+Codex has no private project-instruction file — it reads `AGENTS.md` and nothing
+else — so the rare Codex-only note stays here, explicitly labelled.
+
+## Layout
 
 | Path | Read by | Notes |
 | --- | --- | --- |
 | `SKILL.md` | Codex CLI | Skill root; Codex loads `~/.codex/skills/<name>/SKILL.md` |
 | `agents/openai.yaml` | Codex CLI | Display name and implicit-invocation policy |
-| `.claude/skills/delegate-to-deepseek/` | Claude Code | Project-level skill; also the source copied to `~/.claude/skills/` |
-| `AGENTS.md` / `CLAUDE.md` | both | This file |
-| `scripts/`, `assets/`, `tests/` | both | Shared implementation |
+| `.claude/skills/delegate-to-deepseek/` | Claude Code | Project-level skill, and the source copied to `~/.claude/skills/` |
+| `.codebuddy/` | WorkBuddy | Custom model config and conditional rules |
+| `scripts/`, `assets/`, `tests/` | all | Shared implementation |
 
-Claude Code only reads its own skills directory, so it cannot load this
-repository in place the way Codex does. `python3 scripts/setup.py install-claude`
-copies the two Claude Code files into `~/.claude/skills/delegate-to-deepseek/`.
-**Edit the copies under `.claude/` in this repository, never the installed ones**,
-then rerun that action. `setup.py check` warns when the two have drifted.
-
-The two `SKILL.md` files are deliberately different documents, not duplicates:
-the Codex one defaults to `--backend codex`, the Claude Code one to
-`--backend claude`, and each documents the boundaries that apply to its own
-harness. Keep facts that belong to both — credential handling, verification
-discipline — consistent between them.
+The per-harness `SKILL.md` files are deliberately different documents, not
+duplicates: each defaults to its own backend and documents the boundaries that
+apply to its own harness. Keep facts that belong to all of them — credential
+handling, verification discipline — consistent between them.
 
 ## Backends
 
@@ -55,14 +61,13 @@ Use `--dry-run` to inspect a child command without spending tokens.
   `DEEPSEEK_API_KEY`, the macOS Keychain item `codex-deepseek-api`, or the
   Windows credential with that target name, and reaches children through a key
   helper rather than through argv or the environment.
-- The `claude` backend must keep `--bare` and must keep stripping inherited
-  `ANTHROPIC_*` and `CLAUDE_CODE_*` variables. Without both, a child falls back
-  to the parent's OAuth credential and bills an Anthropic subscription instead
-  of DeepSeek. Verified by `tests/test_claude_backend.py`.
-- Never grant the child a `Task`/subagent tool, and keep
-  `--disable-slash-commands` set, so a child cannot re-enter this skill.
+- Never grant a child a `Task`/subagent tool, and keep nested delegation
+  disabled, so a child cannot re-enter this skill.
 - `assets/result.schema.json` is shared. Codex resolves its draft 2020-12
   `$schema` meta-reference; Claude Code rejects it, so `claude_json_schema()`
   strips that key at call time. Do not fork the file.
 - Windows is supported: no POSIX-only APIs in `scripts/`, and process teardown
   goes through `popen_kwargs()` / `terminate_process_tree()`.
+- Installers must be non-destructive. They write atomically and refuse to
+  overwrite a file this repository did not write; config files belonging to
+  another product are merged, never replaced.
