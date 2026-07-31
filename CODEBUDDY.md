@@ -1,18 +1,29 @@
 # CODEBUDDY.md
 
 Shared repository instructions live in `AGENTS.md`, which WorkBuddy loads
-automatically. This file holds only what is true of WorkBuddy, so Codex and
-Claude Code sessions do not load it.
+through the import below. WorkBuddy stops after finding `CODEBUDDY.md` at a
+directory level, so removing the import would hide the shared instructions.
+This file holds only what is true of WorkBuddy, so Codex and Claude Code
+sessions do not load it.
+
+@AGENTS.md
 
 ## The DeepSeek direct provider
 
-`.codebuddy/models.json` defines `deepseek-v4-flash-direct`, a custom model that
-talks to `https://api.deepseek.com` instead of the `copilot.tencent.com`
-gateway. It exists for one reason: the gateway's built-in `deepseek-v4-flash`
-gives no way to know which build you are on, and DeepSeek shipped a retrained
-`DeepSeek-V4-Flash-0731` on 2026-07-31. Going direct, the slug tracks the latest
-build, so you know what you are running — at the cost of paying DeepSeek instead
-of spending subscription credits.
+`.codebuddy/models.json` is the version-controlled source for the custom
+`deepseek-v4-flash` model. Its URL is the complete OpenAI-compatible Chat
+Completions endpoint, `https://api.deepseek.com/v1/chat/completions`; WorkBuddy
+sends the model id verbatim to DeepSeek, so do not replace the official slug
+with a local alias.
+
+`.codebuddy/agents/deepseek.md` defines the native `deepseek` subagent. Its
+frontmatter pins WorkBuddy's internal `custom-local:deepseek-v4-flash` selector
+so it cannot collide with the built-in model of the same name. The custom model
+entry itself keeps the bare API id above; WorkBuddy removes the internal prefix
+before sending the request. The agent deliberately omits agent/delegation tools,
+so the child cannot recursively fan out. The main WorkBuddy agent sees its name
+and description, while the full body becomes the child's instructions only when
+the agent is invoked.
 
 Verified against the live API: `POST /chat/completions` returns
 `finish_reason: "tool_calls"` with well-formed `tool_calls`, so tool use works
@@ -24,18 +35,30 @@ on this path. Both `https://api.deepseek.com` and `.../v1` resolve.
 python3 scripts/setup.py install-workbuddy
 ```
 
-This merges two variables into the `env` block of `~/.workbuddy/settings.json`,
-leaving every other setting untouched:
+This performs three user-level installations while leaving unrelated settings,
+models, and agents untouched:
 
-- `DEEPSEEK_API_KEY` — read from the macOS Keychain item `codex-deepseek-api` or
-  the Windows credential with that name. If no key is stored yet, the same
-  masked dialog the rest of this repository uses opens first.
-- `CODEBUDDY_SMALL_FAST_MODEL=deepseek-v4-flash-direct` — maps the `lite`
-  variant, so `Explore` sub-agents run on DeepSeek while the main session keeps
-  whatever model you selected.
+- Merge the model into `~/.codebuddy/models.json`.
+- Copy the managed agent to `~/.codebuddy/agents/deepseek.md`.
+- Merge `DEEPSEEK_API_KEY` into the `env` block of
+  `~/.workbuddy/settings.json`. The value comes from the macOS Keychain item
+  `codex-deepseek-api` or the Windows credential with that name; if no key is
+  stored yet, the same masked dialog opens first.
+- Set `CODEBUDDY_SMALL_FAST_MODEL=custom-local:deepseek-v4-flash`. WorkBuddy's
+  Agent tool cannot choose a model per invocation, and built-in subagents such
+  as Explore request the `lite` variant, so this global mapping is what makes
+  ordinary automatic delegation use the direct DeepSeek model. The
+  `custom-local:` prefix is required to avoid WorkBuddy's built-in model with
+  the same bare id.
+- On macOS, preserve existing `NODE_OPTIONS` and add
+  `--dns-result-order=ipv6first`. DeepSeek's IPv4 edge can reject the TLS
+  handshake while its IPv6 edge remains reachable; WorkBuddy's bundled Node
+  otherwise selects the failing address first.
 
-Restart WorkBuddy afterwards: `${...}` values are resolved from `process.env`,
-and a GUI app launched from Finder does not inherit a shell's environment.
+Restart WorkBuddy afterwards so it reloads the global model, agent, and
+environment. Its normal `lite` subagents will then use DeepSeek automatically;
+you can still ask it to “use the deepseek agent” when you want an explicit,
+named delegation.
 
 ## Known limits
 
@@ -44,8 +67,8 @@ and a GUI app launched from Finder does not inherit a shell's environment.
   `process.env`; there is no helper-command hook the way Codex and Claude Code
   have one (`apiKeyHelper` covers WorkBuddy's own product token, not custom
   models). This is a real downgrade from the Keychain-only handling everywhere
-  else in this repository. `.codebuddy/models.json` itself stays clean and
-  committable because it only ever contains `${DEEPSEEK_API_KEY}`.
+  else in this repository. Both project and global `models.json` stay clean
+  because they contain only `${DEEPSEEK_API_KEY}`.
 - **Reasoning continuity across turns is unverified on this path.** WorkBuddy
   echoes prior reasoning back to the gateway in a `reasoning` field; DeepSeek
   emits and expects `reasoning_content`. Whether the direct path preserves the
@@ -60,9 +83,12 @@ and a GUI app launched from Finder does not inherit a shell's environment.
 Do not trust the model picker: a slug appearing in the list proves nothing about
 which build answers, or whether the custom entry loaded at all.
 
-1. `~/.workbuddy/logs/` — `[CustomModelsProductProvider]` reports the config
-   path it read; `[AgentModelResolver]` reports what a sub-agent resolved to.
-   `resolved_models` should name the custom id rather than `lite`.
+1. `~/.workbuddy/logs/` — `[CustomModelsProductProvider]` should report
+   `~/.codebuddy/models.json`; the resolver should report
+   `Using env variable model for lite: custom-local:deepseek-v4-flash`.
+   `[AgentModelResolver]` should also resolve the named `deepseek` agent to that
+   same internal id, not the built-in model with the same bare id and not the
+   main model.
 2. `~/.workbuddy/traces/*/trace_*.json` — the `generation` spans carry the real
    request and response. `toolOutput` is the raw provider reply; its `model`
    field is authoritative. Note `toolInput` is truncated at 100 KB and omits the

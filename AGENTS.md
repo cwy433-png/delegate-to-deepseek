@@ -24,13 +24,15 @@ else — so the rare Codex-only note stays here, explicitly labelled.
 | `SKILL.md` | Codex CLI | Skill root; Codex loads `~/.codex/skills/<name>/SKILL.md` |
 | `agents/openai.yaml` | Codex CLI | Display name and implicit-invocation policy |
 | `.claude/skills/delegate-to-deepseek/` | Claude Code | Project-level skill, and the source copied to `~/.claude/skills/` |
-| `.codebuddy/` | WorkBuddy | Custom model config and conditional rules |
+| `.codebuddy/models.json` | WorkBuddy | Canonical custom-model entry copied into the user catalog |
+| `.codebuddy/agents/deepseek.md` | WorkBuddy | Canonical native subagent copied into the user agents directory |
 | `scripts/`, `assets/`, `tests/` | all | Shared implementation |
 
-The per-harness `SKILL.md` files are deliberately different documents, not
-duplicates: each defaults to its own backend and documents the boundaries that
-apply to its own harness. Keep facts that belong to all of them — credential
-handling, verification discipline — consistent between them.
+The Codex and Claude Code `SKILL.md` files are deliberately different documents,
+not duplicates: each defaults to its own backend and documents the boundaries
+that apply to its own harness. WorkBuddy uses a native custom agent instead.
+Keep facts that belong to all of them — credential handling, verification
+discipline — consistent between them.
 
 ## Backends
 
@@ -57,10 +59,9 @@ Use `--dry-run` to inspect a child command without spending tokens.
 
 ## Conventions
 
-- Never print, log, echo, or commit the DeepSeek API key. It lives in
-  `DEEPSEEK_API_KEY`, the macOS Keychain item `codex-deepseek-api`, or the
-  Windows credential with that target name, and reaches children through a key
-  helper rather than through argv or the environment.
+- Never print, log, echo, or commit the DeepSeek API key. Each harness documents
+  its own credential storage and transport; do not silently weaken those
+  harness-specific boundaries.
 - Never grant a child a `Task`/subagent tool, and keep nested delegation
   disabled, so a child cannot re-enter this skill.
 - `assets/result.schema.json` is shared. Codex resolves its draft 2020-12
