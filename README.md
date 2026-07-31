@@ -39,6 +39,54 @@ python3 -m unittest discover -s tests -v
 python3 -m py_compile scripts/*.py
 ```
 
+## 仓库布局：一个仓库，两个前端
+
+同一份实现被两个 agent 外壳消费，但各自读不同的文件：
+
+| 路径 | 谁读 | 说明 |
+| --- | --- | --- |
+| `SKILL.md`、`agents/openai.yaml` | Codex CLI | 仓库本身就是 `~/.codex/skills/<name>/` |
+| `.claude/skills/delegate-to-deepseek/` | Claude Code | 项目级 skill，同时是复制到 `~/.claude/skills/` 的源 |
+| `AGENTS.md` / `CLAUDE.md` | 两者 | 开发本仓库时的项目指令 |
+| `scripts/`、`assets/`、`tests/` | 两者 | 共用实现 |
+
+Claude Code 只读自己的 skills 目录，无法像 Codex 那样就地加载本仓库，所以需要复制一次：
+
+```bash
+python3 scripts/setup.py install-claude
+```
+
+**请修改仓库 `.claude/` 下的文件，不要改已安装的副本**，改完重跑上面的命令。
+`setup.py check` 会在两边不一致时提示。两份 `SKILL.md` 是刻意不同的文档而非重复：
+Codex 那份默认 `--backend codex`，Claude Code 那份默认 `--backend claude`，
+各自只描述本外壳适用的边界。
+
+## 两种委派后端
+
+`scripts/delegate.py` 可以把 DeepSeek 托管在两种 agent 外壳里，用 `--backend` 选择。
+DeepSeek 同时提供 Responses 和 Anthropic 两套 API，所以两条路都是原生的：
+
+| | `codex`（默认） | `claude` |
+| --- | --- | --- |
+| 协议 | Responses，`https://api.deepseek.com` | Messages，`https://api.deepseek.com/anthropic` |
+| 依赖 | Codex CLI + `deepseek-flash` profile | 仅 Claude Code CLI |
+| macOS TLS | 走 `curl` 回环桥 | 直连，无需桥 |
+| `review` 边界 | 操作系统沙箱（`read-only`），可用 shell | 工具白名单，除非 `--shell` 否则无 shell |
+| `--structured` | `--output-schema`，JSON 前带散文 | `--json-schema`，纯 JSON |
+| 单轮 review 耗时 | 约 60s | 约 15-40s |
+
+```bash
+python3 scripts/delegate.py --backend claude --mode review --structured \
+  --cwd <项目目录> --task "审查认证流程的正确性缺陷"
+```
+
+`claude` 后端的凭证隔离：`--bare` 不读 OAuth 和钥匙串，启动器还会剥掉子进程继承的
+所有 `ANTHROPIC_*` 与 `CLAUDE_CODE_*` 变量，API key 经 `apiKeyHelper` 传入而不进
+argv 或环境变量。因此子进程只能用 DeepSeek key，不会悄悄消耗 Anthropic 订阅额度 ——
+可在子进程的 `modelUsage` 中确认它是 `deepseek-*`。两点注意：该后端的 `write` 模式
+会免批准执行 shell 且没有操作系统级工作区隔离，请在 git worktree 或一次性目录里跑；
+它报告的 `total_cost_usd` 按 Anthropic 价格计算，对 DeepSeek 无意义。
+
 核心协议适配集中在 `scripts/app_server.py`。升级 Codex 后，应先重新生成
 App Server schema 并运行测试：
 

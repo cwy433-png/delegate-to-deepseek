@@ -1,0 +1,61 @@
+#!/bin/bash
+# Launch DeepSeek V4 Flash as a bounded subagent from Claude Code.
+#
+# Adapts scripts/delegate.py to the Claude Code side:
+#   - defaults to --backend claude, which reaches DeepSeek's Anthropic-compatible
+#     endpoint directly: no Codex install, no curl bridge, ~2-4x faster per turn
+#   - defaults --timeout to 480s so the child finishes inside the Bash tool's
+#     600s ceiling instead of being killed mid-turn
+#   - puts the ChatGPT.app codex binary on PATH for --backend codex, which is
+#     still the right choice when review must be enforced by an OS sandbox
+# All other arguments pass straight through to the launcher.
+#
+# This file is the version-controlled original. `setup.py install-claude` copies
+# it to ~/.claude/skills/delegate-to-deepseek/ so the skill also works outside
+# this repository; keep the two byte-identical.
+
+set -euo pipefail
+
+BUNDLED_CODEX_DIR="/Applications/ChatGPT.app/Contents/Resources"
+HERE="$(cd "$(dirname "$0")" && pwd)"
+
+# Resolve the launcher: an explicit override, then this repository (the file
+# sits at <repo>/.claude/skills/delegate-to-deepseek/), then the default Codex
+# skill install path that an installed copy falls back to.
+for candidate in \
+  "${DELEGATE_TO_DEEPSEEK_HOME:-}/scripts/delegate.py" \
+  "$HERE/../../../scripts/delegate.py" \
+  "$HOME/.codex/skills/delegate-to-deepseek/scripts/delegate.py"
+do
+  if [ -f "$candidate" ]; then
+    LAUNCHER="$candidate"
+    break
+  fi
+done
+
+if [ -z "${LAUNCHER:-}" ]; then
+  echo "delegate.py not found. Set DELEGATE_TO_DEEPSEEK_HOME to the repository root," >&2
+  echo "or clone https://github.com/cwy433-png/delegate-to-deepseek into ~/.codex/skills/." >&2
+  exit 2
+fi
+
+if ! command -v codex >/dev/null 2>&1 && [ -x "$BUNDLED_CODEX_DIR/codex" ]; then
+  export PATH="$BUNDLED_CODEX_DIR:$PATH"
+fi
+
+has_timeout=0
+has_backend=0
+for arg in "$@"; do
+  case "$arg" in
+    --timeout) has_timeout=1 ;;
+    --backend) has_backend=1 ;;
+  esac
+done
+if [ "$has_timeout" -eq 0 ]; then
+  set -- --timeout 480 "$@"
+fi
+if [ "$has_backend" -eq 0 ]; then
+  set -- --backend claude "$@"
+fi
+
+exec python3 "$LAUNCHER" "$@"

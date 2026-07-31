@@ -26,6 +26,11 @@ import win_cred  # local sibling module; inert outside Windows
 PROFILE_NAME = "deepseek-flash"
 SERVICE = "codex-deepseek-api"
 MARKER = "# Managed by delegate-to-deepseek"
+SKILL_NAME = "delegate-to-deepseek"
+# Both installed Claude Code files carry the skill name already -- SKILL.md in
+# its frontmatter, the wrapper in its header comment -- so an unrelated file
+# that happens to sit at the target path is never clobbered.
+MARKER_CLAUDE = SKILL_NAME
 KEY_DIALOG_SCRIPT = r'''
 set dialogResult to display dialog "Paste your DeepSeek API key. It will be stored in macOS Keychain and will not be written to Codex config." default answer "" with title "Configure DeepSeek for Codex" buttons {"Cancel", "Save"} default button "Save" cancel button "Cancel" with hidden answer
 return text returned of dialogResult
@@ -187,6 +192,92 @@ def install() -> int:
     target.chmod(0o600)
     print(f"Installed Codex profile: {target}")
     return 0
+
+
+def claude_home() -> Path:
+    configured = os.environ.get("CLAUDE_CONFIG_DIR")
+    return Path(configured).expanduser() if configured else Path.home() / ".claude"
+
+
+def claude_skill_source() -> Path:
+    """The version-controlled Claude Code half of this repository."""
+    return skill_dir() / ".claude" / "skills" / SKILL_NAME
+
+
+def claude_skill_target() -> Path:
+    return claude_home() / "skills" / SKILL_NAME
+
+
+def write_file_atomically(target: Path, data: str, *, executable: bool) -> None:
+    with tempfile.NamedTemporaryFile(
+        mode="w",
+        encoding="utf-8",
+        newline="",
+        dir=target.parent,
+        prefix=f".{target.name}.",
+        delete=False,
+    ) as handle:
+        handle.write(data)
+        temporary = Path(handle.name)
+    os.replace(temporary, target)
+    target.chmod(0o755 if executable else 0o644)
+
+
+def install_claude() -> int:
+    """Copy the Claude Code skill into the user's skills directory.
+
+    Claude Code only reads its own skills directory, so the repository cannot
+    serve it in place the way it serves Codex. Copying keeps one source of truth
+    in Git; rerun this action after the repository changes. Files that this
+    action did not write are never overwritten.
+    """
+    source = claude_skill_source()
+    if not source.is_dir():
+        print(f"Claude skill source missing: {source}", file=sys.stderr)
+        return 1
+
+    target = claude_skill_target()
+    target.mkdir(parents=True, exist_ok=True)
+
+    copied = 0
+    for name, executable in (("SKILL.md", False), ("deepseek", True)):
+        origin = source / name
+        if not origin.is_file():
+            print(f"Claude skill file missing: {origin}", file=sys.stderr)
+            return 1
+        desired = origin.read_text(encoding="utf-8")
+        destination = target / name
+        if destination.exists():
+            current = destination.read_text(encoding="utf-8")
+            if current == desired:
+                continue
+            if MARKER_CLAUDE not in current:
+                print(
+                    f"Refusing to overwrite unmanaged file: {destination}",
+                    file=sys.stderr,
+                )
+                return 1
+        write_file_atomically(destination, desired, executable=executable)
+        copied += 1
+
+    if copied == 0:
+        print(f"Claude Code skill already current: {target}")
+    else:
+        print(f"Installed Claude Code skill: {target}")
+    return 0
+
+
+def claude_skill_is_current() -> bool:
+    source = claude_skill_source()
+    target = claude_skill_target()
+    for name in ("SKILL.md", "deepseek"):
+        origin = source / name
+        destination = target / name
+        if not origin.is_file() or not destination.is_file():
+            return False
+        if origin.read_text(encoding="utf-8") != destination.read_text(encoding="utf-8"):
+            return False
+    return True
 
 
 def apple_script_string(value: str) -> str:
@@ -410,6 +501,16 @@ def check() -> int:
     if key_result.returncode != 0:
         problems.append("API key is not available")
 
+    # The Claude Code half is optional, so report drift as advice rather than
+    # as a failure: `codex` alone is a complete install.
+    if shutil.which("claude") is not None and not claude_skill_is_current():
+        print(
+            f"NOTE: Claude Code skill is missing or stale at {claude_skill_target()}. "
+            f"Refresh it with: {sys.executable} "
+            f"{skill_dir() / 'scripts' / 'setup.py'} install-claude",
+            file=sys.stderr,
+        )
+
     if problems:
         for problem in problems:
             print(f"ERROR: {problem}", file=sys.stderr)
@@ -430,7 +531,7 @@ def parse_args() -> argparse.Namespace:
         "action",
         nargs="?",
         default="configure",
-        choices=("configure", "install", "store-key", "check"),
+        choices=("configure", "install", "install-claude", "store-key", "check"),
     )
     return parser.parse_args()
 
@@ -441,6 +542,8 @@ def main() -> int:
         return configure()
     if action == "install":
         return install()
+    if action == "install-claude":
+        return install_claude()
     if action == "store-key":
         return store_key()
     return check()
