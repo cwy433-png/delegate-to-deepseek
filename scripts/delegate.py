@@ -6,6 +6,7 @@ from __future__ import annotations
 import argparse
 import os
 from pathlib import Path
+import platform
 import select
 import shlex
 import shutil
@@ -37,6 +38,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--timeout", type=int, default=1800, help="Seconds before termination.")
     parser.add_argument("--structured", action="store_true")
     parser.add_argument("--add-dir", action="append", default=[])
+    parser.add_argument(
+        "--transport",
+        choices=("auto", "native", "curl"),
+        default="auto",
+        help="Use a loopback curl TLS bridge automatically on macOS.",
+    )
     parser.add_argument("--dry-run", action="store_true")
     return parser.parse_args()
 
@@ -52,6 +59,28 @@ def terminate_process_group(process: subprocess.Popen[str]) -> None:
             os.killpg(process.pid, signal.SIGKILL)
         except ProcessLookupError:
             pass
+
+
+def start_curl_bridge(scripts_dir: Path) -> tuple[subprocess.Popen[str], str]:
+    bridge = scripts_dir / "curl_bridge.py"
+    key_helper = scripts_dir / "deepseek_key.py"
+    process = subprocess.Popen(
+        [sys.executable, str(bridge), "--key-command", str(key_helper)],
+        stdout=subprocess.PIPE,
+        text=True,
+        bufsize=1,
+        start_new_session=True,
+    )
+    assert process.stdout is not None
+    readable, _, _ = select.select([process.stdout], [], [], 10.0)
+    if not readable:
+        terminate_process_group(process)
+        raise RuntimeError("the local curl bridge did not start")
+    base_url = process.stdout.readline().strip()
+    if process.poll() is not None or not base_url.startswith("http://127.0.0.1:"):
+        terminate_process_group(process)
+        raise RuntimeError("the local curl bridge returned an invalid address")
+    return process, base_url
 
 
 def main() -> int:
@@ -102,9 +131,24 @@ def main() -> int:
 
     sandbox = "read-only" if args.mode == "review" else "workspace-write"
     schema = Path(__file__).resolve().parent.parent / "assets" / "result.schema.json"
+    use_curl_bridge = args.transport == "curl" or (
+        args.transport == "auto"
+        and platform.system() == "Darwin"
+        and shutil.which("curl") is not None
+    )
 
     with tempfile.TemporaryDirectory(prefix="deepseek-subagent-") as temp_dir:
         final_path = Path(temp_dir) / "final.txt"
+        bridge_process: subprocess.Popen[str] | None = None
+        bridge_url: str | None = None
+        if use_curl_bridge and not args.dry_run:
+            try:
+                bridge_process, bridge_url = start_curl_bridge(
+                    Path(__file__).resolve().parent
+                )
+            except RuntimeError as error:
+                print(f"Could not start DeepSeek curl bridge: {error}", file=sys.stderr)
+                return 2
         command = [
             codex,
             "exec",
@@ -128,6 +172,17 @@ def main() -> int:
             "--output-last-message",
             str(final_path),
         ]
+        if bridge_url:
+            command.extend(
+                ("-c", f'model_providers.deepseek.base_url="{bridge_url}"')
+            )
+        elif use_curl_bridge and args.dry_run:
+            command.extend(
+                (
+                    "-c",
+                    'model_providers.deepseek.base_url="http://127.0.0.1:<port>"',
+                )
+            )
         for extra in args.add_dir:
             command.extend(("--add-dir", str(Path(extra).expanduser().resolve())))
         if args.structured:
@@ -138,53 +193,57 @@ def main() -> int:
             print(shlex.join(command))
             return 0
 
-        process = subprocess.Popen(
-            command,
-            stdin=subprocess.PIPE,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT,
-            text=True,
-            bufsize=1,
-            start_new_session=True,
-        )
-        assert process.stdin is not None
-        assert process.stdout is not None
-        process.stdin.write(task)
-        process.stdin.close()
-
-        deadline = time.monotonic() + args.timeout
         try:
-            while process.poll() is None:
-                if time.monotonic() >= deadline:
-                    print(
-                        f"DeepSeek subagent timed out after {args.timeout} seconds.",
-                        file=sys.stderr,
-                    )
-                    terminate_process_group(process)
-                    return 124
-                readable, _, _ = select.select([process.stdout], [], [], 1.0)
-                if readable:
-                    line = process.stdout.readline()
-                    if line:
-                        print(line, end="", file=sys.stderr, flush=True)
-            for line in process.stdout:
-                print(line, end="", file=sys.stderr, flush=True)
-        except KeyboardInterrupt:
-            terminate_process_group(process)
-            return 130
-
-        if process.returncode != 0:
-            print(
-                f"DeepSeek subagent exited with status {process.returncode}.",
-                file=sys.stderr,
+            process = subprocess.Popen(
+                command,
+                stdin=subprocess.PIPE,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                text=True,
+                bufsize=1,
+                start_new_session=True,
             )
-            return process.returncode or 1
-        if not final_path.exists():
-            print("DeepSeek subagent produced no final message.", file=sys.stderr)
-            return 1
+            assert process.stdin is not None
+            assert process.stdout is not None
+            process.stdin.write(task)
+            process.stdin.close()
 
-        print(final_path.read_text(encoding="utf-8").strip())
-        return 0
+            deadline = time.monotonic() + args.timeout
+            try:
+                while process.poll() is None:
+                    if time.monotonic() >= deadline:
+                        print(
+                            f"DeepSeek subagent timed out after {args.timeout} seconds.",
+                            file=sys.stderr,
+                        )
+                        terminate_process_group(process)
+                        return 124
+                    readable, _, _ = select.select([process.stdout], [], [], 1.0)
+                    if readable:
+                        line = process.stdout.readline()
+                        if line:
+                            print(line, end="", file=sys.stderr, flush=True)
+                for line in process.stdout:
+                    print(line, end="", file=sys.stderr, flush=True)
+            except KeyboardInterrupt:
+                terminate_process_group(process)
+                return 130
+
+            if process.returncode != 0:
+                print(
+                    f"DeepSeek subagent exited with status {process.returncode}.",
+                    file=sys.stderr,
+                )
+                return process.returncode or 1
+            if not final_path.exists():
+                print("DeepSeek subagent produced no final message.", file=sys.stderr)
+                return 1
+
+            print(final_path.read_text(encoding="utf-8").strip())
+            return 0
+        finally:
+            if bridge_process is not None:
+                terminate_process_group(bridge_process)
 
 
 if __name__ == "__main__":

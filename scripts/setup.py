@@ -155,6 +155,10 @@ def save_key_to_keychain(
         check=False,
         capture_output=True,
         text=True,
+        # `security` reads from the controlling terminal when one exists, even
+        # when stdin is piped. Detach the child session so `-w` consumes the
+        # password from this private pipe instead of opening a second prompt.
+        start_new_session=True,
     )
     return result.returncode
 

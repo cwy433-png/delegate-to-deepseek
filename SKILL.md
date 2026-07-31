@@ -45,7 +45,7 @@ python3 <skill-dir>/scripts/delegate.py \
   --task "Implement the scoped change, run focused tests, and report every changed file."
 ```
 
-The launcher disables nested multi-agent delegation, runs ephemerally, streams child events to stderr, and prints only the final child answer to stdout.
+The launcher disables nested multi-agent delegation, runs ephemerally, streams child events to stderr, and prints only the final child answer to stdout. On macOS it routes only the DeepSeek API requests through a temporary `127.0.0.1` bridge backed by system `curl`, avoiding TLS-client incompatibilities while leaving the Codex agent loop intact. Use `--transport native` only when direct Codex TLS is known to work.
 
 ## Write a bounded task
 
