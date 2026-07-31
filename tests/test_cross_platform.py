@@ -117,11 +117,16 @@ class DelegateTests(unittest.TestCase):
                 return 0
 
         error_output = io.StringIO()
+        collected: list[str] = []
         with redirect_stderr(error_output):
-            status = delegate.stream_child_output(FakeProcess(), time.monotonic() + 2)
+            status = delegate.stream_child_output(
+                FakeProcess(), time.monotonic() + 2, collected
+            )
 
         self.assertIsNone(status)
         self.assertEqual(error_output.getvalue(), "first\nsecond\n")
+        # The claude backend recovers its final answer from these lines.
+        self.assertEqual(collected, ["first\n", "second\n"])
 
     def test_windows_termination_uses_taskkill_tree(self) -> None:
         process = mock.Mock(pid=1234)
