@@ -1,15 +1,21 @@
 # DeepCodex
 
-以 DeepSeek V4 Flash 为默认模型的一套本地 agent 工具。同一份 `scripts/`
-实现向外交付**两样东西**，请按需要读对应章节：
+让各种 agent 外壳用上 DeepSeek V4 Flash。本仓库交付**三条互相独立的路径**，
+它们共用 `scripts/setup.py` 的安装与密钥存储，但机制完全不同：
 
-| 交付物 | 是什么 | 入口 | 从哪读起 |
+| 交付物 | 机制 | 入口 | 从哪读起 |
 | --- | --- | --- | --- |
-| **delegate-to-deepseek** 技能 | 把有边界的任务派给 DeepSeek 子进程，由 Codex CLI / Claude Code / WorkBuddy 加载 | `scripts/delegate.py`、`SKILL.md` | [仓库布局](#仓库布局一个仓库三个前端)、[两种委派后端](#两种委派后端) |
+| **delegate-to-deepseek** 技能 | 由 Codex CLI 和 Claude Code 加载，把有边界的任务派给一个**独立的 DeepSeek 子进程** | `scripts/delegate.py`、`SKILL.md`、`.claude/skills/` | [仓库布局](#仓库布局一个仓库三个前端)、[两种委派后端](#两种委派后端) |
+| **WorkBuddy direct provider** | **不走本技能**：注册一个直连 Chat Completions 的自定义模型和原生 `deepseek` subagent，没有子进程 | `.codebuddy/models.json`、`.codebuddy/agents/deepseek.md` | [`CODEBUDDY.md`](CODEBUDDY.md) |
 | **DeepCodex GUI**（预览版） | 以 Codex App Server 为内核的跨平台本地图形界面，双击即用，不需要 ChatGPT 订阅也不用 TUI | `DeepCodex.command` / `DeepCodex.cmd`、`scripts/web_gui.py` | [已实现](#deepcodex-gui已实现)、[启动](#deepcodex-gui启动) |
 
-两者共用密钥存储、模型配置和 `scripts/` 下的实现，因此放在同一个仓库；但它们
-是独立的交付物，只用其中一个不需要装另一个。
+WorkBuddy 单列一行不是重复实现，而是它的协议装不下这个技能：它的 Agent 工具
+不能逐次指定子 agent 模型（只能全局映射 `CODEBUDDY_SMALL_FAST_MODEL`），自定义
+模型的 `apiKey` 也只能靠 `${ENV_VAR}` 展开而没有 `apiKeyHelper` 那样的 helper
+钩子——因此密钥在这条路上是明文的。这些取舍和验证方法都记在 `CODEBUDDY.md`，
+用之前请先读那里的「Known limits」。
+
+三条路各自独立，只用其中一条不需要装另外两条。
 
 > GUI 部分是开发预览版。Codex App Server 仍是实验性协议；请先在测试仓库中使用，
 > 并在弹窗中认真检查命令和越界文件修改。
