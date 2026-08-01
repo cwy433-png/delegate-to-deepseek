@@ -1,13 +1,20 @@
-# DeepCodex Preview
+# DeepCodex
 
-一个以 DeepSeek V4 Flash 为默认模型、以 Codex App Server 为 agent 内核的
-跨平台本地 GUI 原型。双击启动后会自动打开浏览器界面；用户不需要 ChatGPT
-订阅，也不需要使用 TUI。
+以 DeepSeek V4 Flash 为默认模型的一套本地 agent 工具。同一份 `scripts/`
+实现向外交付**两样东西**，请按需要读对应章节：
 
-> 当前是开发预览版。Codex App Server 仍是实验性协议；请先在测试仓库中使用，
+| 交付物 | 是什么 | 入口 | 从哪读起 |
+| --- | --- | --- | --- |
+| **delegate-to-deepseek** 技能 | 把有边界的任务派给 DeepSeek 子进程，由 Codex CLI / Claude Code / WorkBuddy 加载 | `scripts/delegate.py`、`SKILL.md` | [仓库布局](#仓库布局一个仓库三个前端)、[两种委派后端](#两种委派后端) |
+| **DeepCodex GUI**（预览版） | 以 Codex App Server 为内核的跨平台本地图形界面，双击即用，不需要 ChatGPT 订阅也不用 TUI | `DeepCodex.command` / `DeepCodex.cmd`、`scripts/web_gui.py` | [已实现](#deepcodex-gui已实现)、[启动](#deepcodex-gui启动) |
+
+两者共用密钥存储、模型配置和 `scripts/` 下的实现，因此放在同一个仓库；但它们
+是独立的交付物，只用其中一个不需要装另一个。
+
+> GUI 部分是开发预览版。Codex App Server 仍是实验性协议；请先在测试仓库中使用，
 > 并在弹窗中认真检查命令和越界文件修改。
 
-## 已实现
+## DeepCodex GUI：已实现
 
 - 本地 GUI 内首次启动时直接弹出遮罩 API Key 输入框
 - macOS Keychain / Windows Credential Manager 安全存储
@@ -18,7 +25,7 @@
 - 本轮 diff 和活动日志
 - 默认禁用 Codex 插件、远程插件、网页搜索和分析遥测
 
-## 启动
+## DeepCodex GUI：启动
 
 要求：Python 3.9+、现代浏览器，以及 Codex CLI，或已安装 ChatGPT 桌面端。
 
@@ -114,7 +121,7 @@ App Server schema 并运行测试：
 codex app-server generate-json-schema --experimental --out /tmp/codex-app-schema
 ```
 
-## 当前限制
+## DeepCodex GUI：当前限制
 
 - 尚未生成签名的 `.app`、`.dmg` 或 Windows 安装包。
 - 当前界面在本地浏览器中打开；后续可原样装进 Tauri/WebView 桌面壳。
