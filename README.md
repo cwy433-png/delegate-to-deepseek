@@ -1,49 +1,11 @@
-# DeepCodex
+# delegate-to-deepseek
 
-让各种 agent 外壳用上 DeepSeek V4 Flash。本仓库交付**三条互相独立的路径**，
-它们共用 `scripts/setup.py` 的安装与密钥存储，但机制完全不同：
+把有边界的编码、排查、审查任务派给 DeepSeek V4 Flash，由控制方 agent 保留
+任务划分、权限、验证和整合的决定权。
 
-| 交付物 | 机制 | 入口 | 从哪读起 |
-| --- | --- | --- | --- |
-| **delegate-to-deepseek** 技能 | 由 Codex CLI 和 Claude Code 加载，把有边界的任务派给一个**独立的 DeepSeek 子进程** | `scripts/delegate.py`、`SKILL.md`、`.claude/skills/` | [仓库布局](#仓库布局一个仓库三个前端)、[两种委派后端](#两种委派后端) |
-| **WorkBuddy direct provider** | **不走本技能**：注册一个直连 Chat Completions 的自定义模型和原生 `deepseek` subagent，没有子进程 | `.codebuddy/models.json`、`.codebuddy/agents/deepseek.md` | [`CODEBUDDY.md`](CODEBUDDY.md) |
-| **DeepCodex GUI**（预览版） | 以 Codex App Server 为内核的跨平台本地图形界面，双击即用，不需要 ChatGPT 订阅也不用 TUI | `DeepCodex.command` / `DeepCodex.cmd`、`scripts/web_gui.py` | [已实现](#deepcodex-gui已实现)、[启动](#deepcodex-gui启动) |
-
-WorkBuddy 单列一行不是重复实现，而是它的协议装不下这个技能：它的 Agent 工具
-不能逐次指定子 agent 模型（只能全局映射 `CODEBUDDY_SMALL_FAST_MODEL`），自定义
-模型的 `apiKey` 也只能靠 `${ENV_VAR}` 展开而没有 `apiKeyHelper` 那样的 helper
-钩子——因此密钥在这条路上是明文的。这些取舍和验证方法都记在 `CODEBUDDY.md`，
-用之前请先读那里的「Known limits」。
-
-三条路各自独立，只用其中一条不需要装另外两条。
-
-> GUI 部分是开发预览版。Codex App Server 仍是实验性协议；请先在测试仓库中使用，
-> 并在弹窗中认真检查命令和越界文件修改。
-
-## DeepCodex GUI：已实现
-
-- 本地 GUI 内首次启动时直接弹出遮罩 API Key 输入框
-- macOS Keychain / Windows Credential Manager 安全存储
-- 独立的 `~/.deepcodex` 配置和会话目录，不读取 ChatGPT 登录状态
-- DeepSeek V4 Flash + Responses API 固定为主模型
-- 项目文件夹选择、流式对话、停止本轮
-- 命令和越界文件修改审批弹窗
-- 本轮 diff 和活动日志
-- 默认禁用 Codex 插件、远程插件、网页搜索和分析遥测
-
-## DeepCodex GUI：启动
-
-要求：Python 3.9+、现代浏览器，以及 Codex CLI，或已安装 ChatGPT 桌面端。
-
-macOS 双击 `DeepCodex.command`，Windows 双击 `DeepCodex.cmd`。也可以运行：
-
-```bash
-python3 scripts/web_gui.py
-```
-
-第一次启动会要求粘贴 DeepSeek API Key。页面只监听 `127.0.0.1`，每次启动
-还会生成随机请求令牌。Key 不会写进 Codex 配置、命令行、日志或 Git；Codex
-通过现有的命令式认证帮助程序从系统密钥库读取它。
+要求 Python 3.9+。`delegate.py` 的两种后端分别需要 Codex CLI 或 Claude Code
+CLI；WorkBuddy 走的是直连模型这条路，两个 CLI 都不需要。密钥存在 macOS
+Keychain / Windows Credential Manager，不进 argv、日志、配置或 Git。
 
 ## 开发检查
 
@@ -120,21 +82,11 @@ argv 或环境变量。因此子进程只能用 DeepSeek key，不会悄悄消�
 会免批准执行 shell 且没有操作系统级工作区隔离，请在 git worktree 或一次性目录里跑；
 它报告的 `total_cost_usd` 按 Anthropic 价格计算，对 DeepSeek 无意义。
 
-核心协议适配集中在 `scripts/app_server.py`。升级 Codex 后，应先重新生成
-App Server schema 并运行测试：
+## 当前限制
 
-```bash
-codex app-server generate-json-schema --experimental --out /tmp/codex-app-schema
-```
-
-## DeepCodex GUI：当前限制
-
-- 尚未生成签名的 `.app`、`.dmg` 或 Windows 安装包。
-- 当前界面在本地浏览器中打开；后续可原样装进 Tauri/WebView 桌面壳。
-- Windows 逻辑已有单元测试，但这一版仍需要在真实 Windows 10/11 机器验收。
-- 尚未恢复历史任务；每次连接会新建 Codex thread。
-- 目前只处理命令和文件修改审批，其他实验性反向请求会安全拒绝。
-- Codex App Server 是实验性接口，未来 Codex 版本可能要求更新适配层。
+- Windows 逻辑已有单元测试，但仍需要在真实 Windows 10/11 机器验收。
+- WorkBuddy 那条路上密钥是明文的，且跨轮次的推理连续性尚未实测；细节见
+  `CODEBUDDY.md` 的「Known limits」。
 
 该项目不是 OpenAI 官方产品。Codex CLI 由 OpenAI 以 Apache-2.0 许可证开源；
 使用者仍需遵守 Codex 与 DeepSeek 各自的服务条款。

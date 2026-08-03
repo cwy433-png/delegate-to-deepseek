@@ -141,13 +141,3 @@ The `claude` backend adds three boundaries of its own:
 - `Task` is never granted and `--disable-slash-commands` is set, so the child cannot re-enter this skill or fan out into further subagents.
 
 Two caveats on `--backend claude`. Its `write` mode auto-approves shell commands with no OS-level workspace jail, so run it in a git worktree or a disposable directory. And its reported `total_cost_usd` is computed with Anthropic pricing, so ignore that number.
-
-## Optional GUI preview
-
-For users who should not need a terminal, launch `DeepCodex.command` on macOS or
-`DeepCodex.cmd` on Windows. The preview opens a localhost-only browser GUI,
-starts Codex App Server with an isolated `~/.deepcodex` home, pins DeepSeek V4
-Flash as the primary model, and provides workspace selection, streaming chat,
-stop, diff, and approval dialogs. Its protocol adapter lives in
-`scripts/app_server.py`; App Server is experimental, so regenerate its schemas
-and rerun the tests after upgrading Codex.
