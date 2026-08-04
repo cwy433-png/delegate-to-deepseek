@@ -28,12 +28,8 @@ allowlist, or when the child needs `apply_patch` and web search.
 
 Keep the default `deepseek-v4-flash`. The slug tracks the latest build, which
 since 2026-07-31 is the retrained `DeepSeek-V4-Flash-0731`. `deepseek-v4-pro` is
-still the preview build, and DeepSeek's changelog says the retrain shipped for
-Flash only. Read the accompanying "Flash-0731 far exceeds V4-Pro-Preview" claim
-as scoped to agentic work: on DeepSeek's own preview-era numbers Pro leads Flash
-on every knowledge benchmark, most starkly SimpleQA-Verified (57.9 vs 34.1).
-This skill delegates agentic tasks, so keep Flash — but the claim is not a
-general statement about the two models.
+still a preview build and is not worth calling; revisit only once an official
+release ships.
 
 ## Route work here, or don't
 
