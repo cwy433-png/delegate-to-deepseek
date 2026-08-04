@@ -21,7 +21,7 @@ else — so the rare Codex-only note stays here, explicitly labelled.
 
 | Path | Read by | Notes |
 | --- | --- | --- |
-| `SKILL.md` | Codex CLI | Skill root; Codex loads `~/.codex/skills/<name>/SKILL.md` |
+| `SKILL.md` | Codex CLI | Source copied to `~/.codex/skills/<name>/` by `install-codex` |
 | `agents/openai.yaml` | Codex CLI | Display name and implicit-invocation policy |
 | `.claude/skills/delegate-to-deepseek/` | Claude Code | Project-level skill, and the source copied to `~/.claude/skills/` |
 | `.codebuddy/models.json` | WorkBuddy | Canonical custom-model entry copied into the user catalog |

@@ -20,7 +20,7 @@ python3 -m py_compile scripts/*.py
 
 | 路径 | 谁读 | 说明 |
 | --- | --- | --- |
-| `SKILL.md`、`agents/openai.yaml` | Codex CLI | 仓库本身就是 `~/.codex/skills/<name>/` |
+| `SKILL.md`、`agents/openai.yaml` | Codex CLI | 复制到 `~/.codex/skills/<name>/` 的源 |
 | `.claude/skills/delegate-to-deepseek/` | Claude Code | 项目级 skill，同时是复制到 `~/.claude/skills/` 的源 |
 | `.codebuddy/models.json` | WorkBuddy | 全局模型目录的源码：直连 DeepSeek Chat Completions |
 | `.codebuddy/agents/deepseek.md` | WorkBuddy | 全局 `deepseek` 子 agent 的源码 |
@@ -33,11 +33,18 @@ python3 -m py_compile scripts/*.py
 `AGENTS.md`（复制三份会漂移），只有一家需要的写进那一家自己的文件，别的前端就不会在每个
 会话里白读。`tests/test_workbuddy_install.py` 里有测试守着这条分界，防止悄悄退化。
 
-Claude Code 只读自己的 skills 目录，无法像 Codex 那样就地加载本仓库，所以需要复制一次：
+三个外壳都只读自己的 skills 目录，所以本仓库可以放在任何普通的项目目录下，改完再装过去：
 
 ```bash
-python3 scripts/setup.py install-claude
+python3 scripts/setup.py install-codex     # -> ~/.codex/skills/
+python3 scripts/setup.py install-claude    # -> ~/.claude/skills/
 ```
+
+`install-codex` 只安装运行时需要的文件（`SKILL.md`、`agents/`、`assets/`、以及 `scripts/`
+下除 `setup.py` 外的模块）。`setup.py`、`tests/` 和文档留在仓库里——它们是开发用的，不是
+运行用的。安装后的 profile 指向**安装副本**而非仓库，所以仓库挪位置或删掉都不会弄坏
+已经装好的 Codex。目标目录带一个 `.managed-by-delegate-to-deepseek` 戳，没有这个戳的
+目录安装器拒绝写入。
 
 WorkBuddy 会把模型和原生 `deepseek` agent 安装到用户级 `~/.codebuddy/`，再把密钥环境合并进
 `~/.workbuddy/settings.json`（保留其余设置不动）：

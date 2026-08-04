@@ -35,16 +35,17 @@ work until its official release lands.
 
 ## Prepare the profile
 
-Before the first delegation, run on macOS or Linux:
+`setup.py` is not installed alongside this skill; it lives in the repository
+checkout. Before the first delegation, run from that checkout on macOS or Linux:
 
 ```bash
-python3 ~/.codex/skills/delegate-to-deepseek/scripts/setup.py
+python3 scripts/setup.py
 ```
 
 On Windows PowerShell, run:
 
 ```powershell
-python "$HOME\.codex\skills\delegate-to-deepseek\scripts\setup.py"
+python scripts\setup.py
 ```
 
 On macOS or Windows 10/11, use this command to install the profile and open a native masked API-key window. Let the user paste the key and click **Save**; store it in macOS Keychain or Windows Credential Manager without placing it in process arguments, shell history, Codex config, or Git. On Linux, set `DEEPSEEK_API_KEY` in the environment that launches Codex. If delegation finds no key later, let the launcher open the same window automatically on macOS or Windows. Never request, print, log, or commit the key in chat.

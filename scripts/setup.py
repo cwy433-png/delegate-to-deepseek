@@ -53,6 +53,24 @@ CLAUDE_SKILL_FILES = (
     ("deepseek", True),
     ("deepseek.cmd", False),
 )
+# What Codex needs at run time, and nothing else. `setup.py`, the tests, the
+# other harnesses' directories, and the prose files stay in the repository:
+# they are how the skill is developed, not how it runs.
+CODEX_SKILL_FILES = (
+    "SKILL.md",
+    "agents/openai.yaml",
+    "assets/models.json",
+    "assets/result.schema.json",
+    "scripts/curl_bridge.py",
+    "scripts/deepseek_key.py",
+    "scripts/delegate.py",
+    "scripts/win_cred.py",
+)
+# The installed tree mixes Markdown, YAML, JSON, and Python, so a per-file
+# marker comment is not available in every syntax. Stamp the directory instead
+# and refuse to write into one that lacks it, which keeps the installer from
+# ever clobbering a directory it did not create.
+CODEX_SKILL_STAMP = ".managed-by-delegate-to-deepseek"
 KEY_DIALOG_SCRIPT = r'''
 set dialogResult to display dialog "Paste your DeepSeek API key. It will be stored in macOS Keychain and will not be written to Codex config." default answer "" with title "Configure DeepSeek for Codex" buttons {"Cancel", "Save"} default button "Save" cancel button "Cancel" with hidden answer
 return text returned of dialogResult
@@ -122,6 +140,16 @@ def profile_path() -> Path:
     return codex_home() / f"{PROFILE_NAME}.config.toml"
 
 
+def codex_skill_target() -> Path:
+    """Where Codex loads the skill from.
+
+    Codex only reads its own skills directory, so the repository is installed
+    here rather than living here. Keeping the repository out of this path is
+    what lets it sit in an ordinary project directory.
+    """
+    return codex_home() / "skills" / SKILL_NAME
+
+
 def toml_basic_string(value: str) -> str:
     """Quote a path as a TOML basic string, escaping backslashes and quotes.
 
@@ -178,7 +206,10 @@ refresh_interval_ms = 0
 
 
 def profile_text() -> str:
-    root = skill_dir()
+    # Point at the installed copy, never at this repository. A profile that
+    # referenced the working tree would break the moment the repository moved
+    # or was deleted, which is exactly what installing is meant to prevent.
+    root = codex_skill_target()
     return _profile_text(
         root / "assets" / "models.json",
         root / "scripts" / "deepseek_key.py",
@@ -214,6 +245,66 @@ def install() -> int:
     target.chmod(0o600)
     print(f"Installed Codex profile: {target}")
     return 0
+
+
+def install_codex() -> int:
+    """Copy the Codex half of this repository into Codex's skills directory.
+
+    Mirrors ``install_claude``: the repository stays the one source of truth in
+    Git and every harness gets an installed copy. Rerun after the repository
+    changes; ``check`` reports drift.
+    """
+    source = skill_dir()
+    target = codex_skill_target()
+    if target.resolve() == source.resolve():
+        print(
+            f"Refusing to install onto the repository itself: {target}",
+            file=sys.stderr,
+        )
+        return 1
+
+    stamp = target / CODEX_SKILL_STAMP
+    if target.exists() and not stamp.is_file():
+        print(f"Refusing to overwrite unmanaged directory: {target}", file=sys.stderr)
+        return 1
+
+    copied = 0
+    for name in CODEX_SKILL_FILES:
+        origin = source / name
+        if not origin.is_file():
+            print(f"Codex skill file missing: {origin}", file=sys.stderr)
+            return 1
+        destination = target / name
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        desired = origin.read_text(encoding="utf-8")
+        if destination.is_file() and destination.read_text(encoding="utf-8") == desired:
+            continue
+        write_file_atomically(destination, desired)
+        copied += 1
+
+    if not stamp.is_file():
+        write_file_atomically(stamp, f"{MARKER}\n")
+
+    if copied == 0:
+        print(f"Codex skill already current: {target}")
+    else:
+        print(f"Installed Codex skill: {target}")
+    return 0
+
+
+def codex_skill_is_current() -> bool:
+    source = skill_dir()
+    target = codex_skill_target()
+    if not (target / CODEX_SKILL_STAMP).is_file():
+        return False
+    for name in CODEX_SKILL_FILES:
+        origin = source / name
+        destination = target / name
+        if not origin.is_file() or not destination.is_file():
+            return False
+        if origin.read_text(encoding="utf-8") != destination.read_text(encoding="utf-8"):
+            return False
+    return True
 
 
 def claude_home() -> Path:
@@ -846,6 +937,10 @@ def store_key() -> int:
 
 
 def configure() -> int:
+    status = install_codex()
+    if status != 0:
+        show_message("The Codex skill could not be installed.", critical=True)
+        return status
     status = install()
     if status != 0:
         show_message("The Codex profile could not be installed.", critical=True)
@@ -863,12 +958,23 @@ def check() -> int:
         problems.append("codex executable not found")
     if not profile_path().exists():
         problems.append(f"profile missing: {profile_path()}")
-    catalog = skill_dir() / "assets" / "models.json"
+    # Check the installed copy, not the repository: that is what the profile
+    # resolves at run time, so a repository that is fine on disk proves nothing.
+    catalog = codex_skill_target() / "assets" / "models.json"
     if not catalog.exists():
         problems.append(f"model catalog missing: {catalog}")
+    if not codex_skill_is_current():
+        problems.append(
+            f"Codex skill is missing or stale at {codex_skill_target()}; "
+            f"refresh it with: {sys.executable} "
+            f"{skill_dir() / 'scripts' / 'setup.py'} install-codex"
+        )
 
+    key_helper = codex_skill_target() / "scripts" / "deepseek_key.py"
+    if not key_helper.is_file():
+        key_helper = skill_dir() / "scripts" / "deepseek_key.py"
     key_result = subprocess.run(
-        [sys.executable, str(skill_dir() / "scripts" / "deepseek_key.py")],
+        [sys.executable, str(key_helper)],
         check=False,
         capture_output=True,
         text=True,
@@ -922,6 +1028,7 @@ def parse_args() -> argparse.Namespace:
         choices=(
             "configure",
             "install",
+            "install-codex",
             "install-claude",
             "install-workbuddy",
             "store-key",
@@ -937,6 +1044,8 @@ def main() -> int:
         return configure()
     if action == "install":
         return install()
+    if action == "install-codex":
+        return install_codex()
     if action == "install-claude":
         return install_claude()
     if action == "install-workbuddy":
