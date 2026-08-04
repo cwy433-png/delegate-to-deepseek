@@ -1,6 +1,17 @@
 ---
 name: delegate-to-deepseek
-description: Delegate a bounded task to DeepSeek V4 Flash running as a separate agent process. Route here when the environment supplies the answer — running commands, reading stderr, editing files, installing dependencies, locating code across a large repository — where Flash edges Claude Sonnet 5 (Terminal-Bench 2.1: 82.7 vs 80.4, each vendor self-reported). Also for fan-out past this plan's rate limit, for a second opinion from outside Claude's training lineage, and when the user says "让小弟/让deepseek去做". Not for work that turns on the model's own knowledge (Humanity's Last Exam without tools: 34.8 vs Sonnet 5's 43.2), builds a system from an empty directory, or must hold global consistency across hundreds of steps. Flash bills a paid API key; in-plan Claude tokens do not.
+description: >-
+  Delegate a bounded task to DeepSeek V4 Flash running as a separate agent
+  process. Route here when the environment supplies the answer — running
+  commands, reading stderr, editing files, installing dependencies, locating
+  code across a large repository — where Flash edges Claude Sonnet 5
+  (Terminal-Bench 2.1: 82.7 vs 80.4, each vendor self-reported). Also for
+  fan-out past this plan's rate limit, for a second opinion from outside
+  Claude's training lineage, and when the user says “让小弟/让deepseek去做”.
+  Not for work that turns on the model's own knowledge (Humanity's Last Exam
+  without tools: 34.8 vs Sonnet 5's 43.2), builds a system from an empty
+  directory, or must hold global consistency across hundreds of steps. Flash
+  bills a paid API key; in-plan Claude tokens do not.
 ---
 
 # Delegate to DeepSeek
