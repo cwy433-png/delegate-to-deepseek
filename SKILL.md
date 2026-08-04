@@ -1,6 +1,6 @@
 ---
 name: delegate-to-deepseek
-description: Launch DeepSeek V4 Flash as a bounded coding subagent inside a separate Codex CLI or Claude Code process. Use when the user asks to delegate work to DeepSeek, obtain an independent code review or second opinion, explore large code or log context, compare model conclusions, or let DeepSeek investigate, implement, or test a scoped repository task.
+description: Run DeepSeek V4 Flash as a bounded subagent in a separate Codex CLI or Claude Code process. Route work here when the environment supplies the answer — running commands, reading stderr, editing files, installing dependencies, locating code across a large repository — where Flash edges Claude Sonnet 5 (Terminal-Bench 2.1: 82.7 vs 80.4, each vendor self-reported). Also for fan-out past a Claude subscription's rate limit, and for a second opinion from outside Claude's training lineage. Not for work that turns on the model's own knowledge (Humanity's Last Exam without tools: 34.8 vs Sonnet 5's 43.2), builds a system from an empty directory, or must hold global consistency across hundreds of steps. Flash bills a paid API key; in-plan Claude tokens do not.
 ---
 
 # Delegate to DeepSeek
@@ -27,11 +27,47 @@ prefixes its JSON with prose, so `json.loads` on its stdout fails. Prefer
 allowlist, or when the child needs `apply_patch` and web search.
 
 Keep the default `deepseek-v4-flash`. The slug tracks the latest build, which
-since 2026-07-31 is the retrained `DeepSeek-V4-Flash-0731` (Terminal Bench 2.1
-82.7). `deepseek-v4-pro` is still the preview build — DeepSeek's changelog says
-that upgrade shipped for Flash only and that Flash-0731 far exceeds
-V4-Pro-Preview — so switching to Pro is likely a downgrade for agentic coding
-work until its official release lands.
+since 2026-07-31 is the retrained `DeepSeek-V4-Flash-0731`. `deepseek-v4-pro` is
+still the preview build, and DeepSeek's changelog says the retrain shipped for
+Flash only. Read the accompanying "Flash-0731 far exceeds V4-Pro-Preview" claim
+as scoped to agentic work: on DeepSeek's own preview-era numbers Pro leads Flash
+on every knowledge benchmark, most starkly SimpleQA-Verified (57.9 vs 34.1).
+This skill delegates agentic tasks, so keep Flash — but the claim is not a
+general statement about the two models.
+
+## Route work here, or don't
+
+Two measurements, each comparing this model against Claude Sonnet 5 on the
+vendor's own published numbers, point the same way:
+
+| | Flash-0731 | Sonnet 5 |
+| --- | --- | --- |
+| Terminal-Bench 2.1 (execution in a live environment) | **82.7** | 80.4 |
+| Humanity's Last Exam, no tools (knowledge recall) | 34.8 | **43.2** |
+
+The split is whether the answer is *in the environment* or *in the weights*. A
+flag is in `--help`, a signature is in the source, a version is in the lockfile —
+tasks like that are knowledge-light, and Flash matches or beats Sonnet 5 on them.
+Ask it to judge something from background knowledge it must already hold and the
+gap runs the other way.
+
+Two things the subscription cannot supply at any effort level, independent of
+capability: **concurrency** past a plan's rate limit, and a review from **outside
+Claude's training lineage**, whose errors are not correlated with the controlling
+agent's.
+
+Against those, weigh what delegation costs. Flash bills a metered API key, while
+tokens inside a Claude plan are already paid for — so "this saves plan quota" is
+not a reason to delegate unless that quota is genuinely scarce. Delegate when the
+task is one Flash does better, needs concurrency the plan will not grant, or
+needs an independent lineage.
+
+Do not delegate work that hinges on the model's own knowledge (English long-tail
+facts especially), that builds a system from an empty directory, or that must
+hold global consistency across hundreds of steps — its weakest published results
+are all in that band. Two caveats on the numbers above: each side is
+self-reported on its own harness, and the Terminal-Bench gap is 2.3 points, which
+is a real ordering but a narrow one.
 
 ## Prepare the profile
 
